@@ -1,10 +1,10 @@
 # WeaponExt — Design Document
 
 Standalone Syringe DLL for Yuri's Revenge, co-loaded with Antares (+ optionally
-Phobos). Four pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
-unit/building properties** (power & range logic).
+Phobos). Five pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
+unit/building properties** (power & range logic), **Radiation**.
 
-Status: design phase (2026-09-07). No code yet.
+Status: design phase (2026-09-07; radiation pillar added 2026-09-11). No code yet.
 
 ---
 
@@ -57,6 +57,26 @@ auras/warheads.
 - No framework has local power pools, weapon power costs, or
   cellspread-augmented range. Range-check precedent: Phobos PR#2088
   `0x4D5A34` FootClass_ApproachTarget_StopWhenInRange.
+
+### Radiation
+- Phobos (release) owns this subsystem almost completely: **RadTypes** (named
+  radiation types per warhead: `SiteWarhead(.Detonate/.Full)`, `Color`,
+  `DurationMultiple`, `ApplicationDelay(.Building)`, `BuildingDamageMaxCount`,
+  `LevelMax/LevelDelay/LevelFactor`, `LightDelay/LightFactor/TintFactor`,
+  `HasOwner`, `HasInvoker`) + **16 registry hooks** across `0x65B28D–0x65BE01`
+  (CTOR/DTOR, Activate cluster, AI delays, UpdateLevel ×3, Deactivate) plus
+  the damage-application sites `0x4DA59F` FootClass_AI_Radiation, `0x43FB23`
+  BuildingClass_AI_Radiation, `0x469150` BulletClass_Detonate_ApplyRadiation.
+  Source: `Phobos/src/New/Type/RadTypeClass.*`, `Ext/RadSite/*`.
+- Antares/Ares touch only `0x65B5FB` (Radiate snow-color unhardcode).
+- Structural facts: a rad site = `BaseCell` + `Spread` (cells) + one scalar
+  level; per-cell level = radial falloff from center, quantized to cells
+  (hence the "pixelated circle" look); fade = uniform level decay, so the
+  visible shrink is *emergent* (outer, weaker cells hit zero first). Cell tint
+  is per-cell palette math — the engine cannot draw sub-cell radiation.
+- Nobody has: noise/messy footprints, sub-cell fields, smooth-drawn circles,
+  conditional spreading, contamination trails, signed shrink/fade rates, or
+  condition-gated rad properties.
 
 ---
 
@@ -301,7 +321,147 @@ Homing-projectile caveat: needs target-cell substitution, not just a range lie.
 
 ---
 
-## 5. Phase roadmap
+## 5. Pillar: Radiation
+
+### 5.0 Architecture decision — parallel field system, NOT RadSiteClass hooks
+
+Phobos fully occupies the `0x65B` RadSiteClass window (16 hooks) and replaces
+chunks of the level math. Layering our features there means fighting their
+handlers on every address. Instead: **RadFields** — our own site objects in
+our own container, spawned by our own warhead tag, with our own per-frame
+damage pass and our own renderer. Vanilla/Phobos radiation stays untouched and
+fully usable alongside. This also happens to be the only way to get sub-cell
+fields and signed fade rates at all, since `RadSiteClass` structurally cannot
+express them (one scalar level + cell-quantized falloff).
+
+```ini
+[SOMEWARHEAD]
+RadField.Type=GreenGoo        ; spawns a RadField instead of / alongside vanilla rad
+
+[RadFieldTypes]
+0=GreenGoo
+
+[GreenGoo]                    ; defaults mirror Phobos RadType names where sensible
+RadField.Warhead=RadSite      ; damage warhead
+RadField.Level=500            ; center level
+RadField.Radius=5.0           ; cells, fractional allowed (sub-cell: <1.0 works)
+RadField.ApplicationDelay=16
+RadField.Duration=900         ; frames before fade begins (-1 = until level empties)
+RadField.Color=0,255,0
+```
+
+### 5.1 Messy / pixelated / splatter footprints
+Per-cell level = radial falloff × noise. Noise must be **deterministic**
+(affects damage → sim state): hash of (site creation frame, base cell, cell) —
+per the synced-vs-hashed rule this is save/replay/MP-safe with no RNG stream
+consumption.
+```ini
+RadField.Shape=circle         ; circle|noisy|splatter|ring
+RadField.Noise=0.0            ; 0..1 amplitude of per-cell level jitter
+RadField.Noise.Holes=0.0      ; 0..1 chance a cell is skipped entirely (the "messy" look)
+RadField.Noise.Scale=1        ; cells per noise sample (1 = per-cell pixel mess,
+                              ; larger = blobby patches)
+```
+`splatter` = a few random sub-blobs around the impact instead of one disc.
+
+### 5.2 Sub-cell fields & smooth rendering (Rex's two questions — both feasible)
+- **Perfect circle within a cell (gameplay):** YES. Our damage pass measures
+  *lepton* distance from field center to each object's exact coordinates; a
+  `Radius=0.4` field damages only objects physically inside that circle, even
+  mid-cell. Vanilla can't do this because damage keys off the victim's cell.
+- **Drawing perfect circles instead of the pixelated cell tint:** YES, with a
+  custom draw layer (same family as WaveClass/EBolt/laser drawing — precedent:
+  the magnetron WaveClass_Draw sites `0x7601C7/0x7601FB/0x760286`). We render
+  a translucent filled circle/ellipse in tactical view and set no cell tint at
+  all. Render-side jitter (shimmer, edge flicker) uses **hashed** randomness,
+  never the synced RNG.
+```ini
+RadField.Draw=cells           ; cells (classic tint)|smooth (drawn circle)|both|none
+RadField.Draw.Alpha=40        ; smooth-mode translucency
+RadField.Draw.EdgeSoftness=0.2
+```
+RE item: pick the draw hook (tactical overlay pass) — consult encyclopedia,
+contribute back. Cell-tint mode reuses per-cell palette tint the way vanilla
+does, but driven from our field function so noise/holes show up in it too.
+
+### 5.3 Conditional spreading + contamination trails
+Spreading = cellular pass over our field's cells every `Rate` frames:
+```ini
+RadField.Spread=no
+RadField.Spread.Rate=90            ; frames between spread steps
+RadField.Spread.Threshold=100      ; min cell level to seed a neighbour
+RadField.Spread.Ratio=0.5          ; seeded level = source × ratio
+RadField.Spread.MaxRadius=12       ; hard cap; -1 = unlimited (map-eater, allowed)
+RadField.Spread.Terrain=           ; optional whitelist (Clear,Road,Water…)
+```
+Trails — a unit driving through hot cells becomes a carrier and lays a trail:
+```ini
+RadField.Trail=no
+RadField.Trail.PickupThreshold=200 ; cell level needed to contaminate a passer-by
+RadField.Trail.Duration=300        ; frames the carrier keeps dripping
+RadField.Trail.Level=100           ; level laid per visited cell
+RadField.Trail.Spread=1.0          ; radius (cells) laid around the carrier's path
+RadField.Trail.Falloff=0.9         ; per-cell-laid decay along the trail
+```
+Carrier state lives on our TechnoExt; movement sampling per frame from our
+update hook (cheap: compare last cell). Kratos `TrailType` is the mechanical
+reference for trail-laying cadence. Carriers can seed new spreadable fields —
+document the combination (`Trail` + `Spread`) as intentionally cascading.
+
+### 5.4 Signed shrink & fade rates
+Vanilla's shrink-while-vanishing is emergent; we make both axes explicit and
+**signed** (negatives allowed for completion, as requested):
+```ini
+RadField.Fade.LevelRate=10         ; level lost per LevelDelay tick;
+                                   ;   negative = field grows HOTTER (capped at Level)
+RadField.Fade.RadiusRate=0.0       ; cells lost per tick; negative = radius GROWS
+                                   ;   (a second, smoother way to spread)
+RadField.Fade.Mode=edge            ; edge (classic: rim dies first)|uniform|center
+                                   ;   center = ring-out death, for completeness
+```
+Growth caps: `LevelMax`, `Spread.MaxRadius` reused. A field with both
+negatives and no caps is a modder foot-gun — warn in docs, don't forbid.
+
+### 5.5 Condition-gated properties (prerequisite system)
+Reuse the PrerequisiteExt **Requirement** primitive shape (types + house scope
++ polarity) rather than inventing a new grammar. A RadFieldType lists override
+profiles; each profile has a condition evaluated against the **field's owner
+house** (we always track owner + invoker, like Phobos `HasOwner/HasInvoker`):
+```ini
+[GreenGoo]
+RadField.Profiles=Enriched,Suppressed
+
+[Enriched]                          ; applies while condition holds
+Requirement.RequiredBuildings=NAPULS
+Requirement.Houses=owner
+RadField.Level=800                  ; any RadField.* tag may be overridden
+RadField.Fade.LevelRate=-5
+
+[Suppressed]
+Requirement.ForbiddenBuildings=GAWEAT
+Requirement.Houses=enemies          ; e.g. enemy counter-structure weakens it
+RadField.Level=200
+```
+Evaluation: at spawn, and re-checked every `RadField.Profiles.Rate=` frames
+(0 = spawn-time only). First matching profile wins; document the ordering.
+Victim-side gates also supported: `RadField.Immune.Houses=`,
+`RadField.Immune.Types=` on the field type.
+
+### 5.6 Hook plan (deliberately tiny)
+- Spawn: read `RadField.Type=` in our existing warhead-detonation touchpoint
+  (shared with §1.5 warhead multipliers — one detonate hook serves both;
+  co-exists with Phobos `0x469150` since we never touch vanilla rad spawning).
+- Per-frame: our existing logic-frame seat (encyclopedia: `0x55B6B3`
+  uncontended post-loop) drives field AI, spread, trails, profiles.
+- Damage: our own pass calls the standard damage-dealing API with the field's
+  warhead — no hooks into Foot/Building AI radiation sites needed.
+- Draw: ONE render hook for smooth mode (M0-style RE task, encyclopedia
+  first). Cell-tint mode needs a cell-tint touchpoint — check what Phobos'
+  TintFactor sites do and pick a non-conflicting seat (RE item).
+
+---
+
+## 6. Phase roadmap
 
 | Phase | Deliverable |
 |---|---|
@@ -318,10 +478,15 @@ Homing-projectile caveat: needs target-cell substitution, not just a range lie.
 | U1 | Local power + weapon power costs |
 | U2 | Power bar rendering |
 | U3 | CellSpread range |
+| R1 | RadField core: spawn tag, cell-tint draw, damage pass, fade rates (signed), noise/splatter shapes |
+| R2 | Spreading + contamination trails; sub-cell radius damage |
+| R3 | Smooth-circle renderer + condition profiles (Requirement reuse) |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
+R1 can run early too — it needs only our own containers plus the shared
+warhead-detonate and logic-frame seats.
 
-## 6. Standing-rule compliance
+## 7. Standing-rule compliance
 - Encyclopedia consulted (RegisterDestruction cluster, CaptureManager cluster,
   locomotor hooks); M0 findings go back in.
 - Hook-overlap CI check wired in P0.
