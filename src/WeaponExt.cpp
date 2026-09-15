@@ -1,5 +1,6 @@
 #include "WeaponExt.h"
 #include "WeaponExtDiag.h"
+#include "ScatterExtDiag.h"
 
 #include <Phobos.h>
 #include <Syringe.h>
@@ -57,6 +58,7 @@ SYRINGE_HANDSHAKE(pInfo)
 DEFINE_HOOK(0x7CD810, WeaponExt_ExeRun, 0x9)
 {
 	WeaponDiag::MarkExeRun();
+	ScatterDiag::MarkExeRun();
 	WeaponExtDLL::ExeRun();
 	return 0;
 }
@@ -66,6 +68,16 @@ DEFINE_HOOK(0x7CD810, WeaponExt_ExeRun, 0x9)
 DEFINE_HOOK(0x7CD81E, WeaponExt_ExeRunAlt, 0x6)
 {
 	WeaponDiag::MarkExeRunAlt();
+	ScatterDiag::MarkExeRunAlt();
 	WeaponExtDLL::ExeRun();
+	return 0;
+}
+
+// Contested (six frameworks). Marks only; ScatterExt's diagnostics proved all
+// three init sites run fine in our chain slot, and this flag keeps that
+// evidence alive in the merged DLL.
+DEFINE_HOOK(0x52F639, WeaponExt_CmdLineParse, 0x5)
+{
+	ScatterDiag::MarkCmdLine();
 	return 0;
 }

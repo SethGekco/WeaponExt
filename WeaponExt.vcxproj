@@ -31,12 +31,27 @@
     <ClCompile Include="Phobos\src\Utilities\Patch.cpp" />
     <!-- P0: bounty probe -->
     <ClCompile Include="src\Hooks.BountyProbe.cpp" />
+    <!-- Scatter (merged from ScatterExt) -->
+    <ClCompile Include="src\ScatterExtDiag.cpp" />
+    <ClCompile Include="src\Scatter.cpp" />
+    <ClCompile Include="src\Hooks.FrameProbe.cpp" />
+    <ClCompile Include="src\Hooks.ROF.cpp" />
+    <ClCompile Include="src\Ext\WeaponType\Body.cpp" />
+    <ClCompile Include="src\Ext\BulletType\Body.cpp" />
+    <ClCompile Include="src\Ext\TechnoType\Body.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
   <ItemGroup>
     <ClInclude Include="src\WeaponExt.h" />
     <ClInclude Include="src\WeaponExtDiag.h" />
+    <ClInclude Include="src\ScatterExtDiag.h" />
+    <ClInclude Include="src\Curve.h" />
+    <ClInclude Include="src\CurveParse.h" />
+    <ClInclude Include="src\Scatter.h" />
+    <ClInclude Include="src\Ext\WeaponType\Body.h" />
+    <ClInclude Include="src\Ext\BulletType\Body.h" />
+    <ClInclude Include="src\Ext\TechnoType\Body.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">

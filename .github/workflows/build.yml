@@ -27,6 +27,12 @@ jobs:
           python3 tools/check_hook_overlap.py hooks.csv src
           python3 tools/check_hook_bounds.py --registry hooks.csv src
 
+      - name: Curve engine tests (native, no game required)
+        shell: bash
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Isrc tests/curve_test.cpp -o curve_test
+          ./curve_test
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
