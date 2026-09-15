@@ -1,10 +1,14 @@
 # WeaponExt — Design Document
 
 Standalone Syringe DLL for Yuri's Revenge, co-loaded with Antares (+ optionally
-Phobos). Five pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
-unit/building properties** (power & range logic), **Radiation**.
+Phobos). Seven pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
+unit/building properties** (power & range logic), **Radiation**,
+**Scatter & fire control** (absorbed from ScatterExt), **Spawned missiles**.
 
-Status: design phase (2026-09-07; radiation pillar added 2026-09-11). No code yet.
+Status: P0 verified in-game 2026-09-14 (bounty probe). ScatterExt merged
+2026-09-15 — its DESIGN.md (22 sections) and HANDOFF-TO-WEAPONEXT.md in the
+ScatterExt repo remain the source of truth for the scatter engine internals;
+§6 here only covers what's NEW on top.
 
 ---
 
@@ -461,7 +465,171 @@ Victim-side gates also supported: `RadField.Immune.Houses=`,
 
 ---
 
-## 6. Phase roadmap
+## 6. Pillar: Scatter & fire control (ScatterExt merged + failure tracking)
+
+### 6.0 What came over in the merge (2026-09-15)
+RangeScatter curves, per-axis ellipsoid scatter, ROF-by-range, plot-point
+curves + easing, InaccuracyModifier — plus the engine knowledge (Fire frame
+map, both vanilla scatter formulas, the 0x6FE8EE seat, the 0x6FF29E rearm
+store) and the native curve test suite (979 checks, runs in CI).
+**Protected invariant: a weapon with no scatter tags consumes ZERO random
+numbers.** Log prefixes are now `[WeaponExt]`; markers `[WEAPONEXT]` /
+`[WEAPONEXT direct-hit]` / `[engine]`. Canaries 0x5CA77E00/01/02.
+Still pending from ScatterExt: in-game observation of ROF-by-range,
+InaccuracyModifier, plot curves (staged rulesmd config exists); §20
+distribution, §7/§8 EvaluateObject gates (relative-branch trap!) designed
+only.
+
+### 6.1 Weapon failure tracking (Rex's cannon-miss system)
+The scatter engine gives us something no other framework has: **we know the
+scattered offset at fire time** (we computed it). A shot whose offset exceeds
+the warhead's lethal radius against the aimed target is a predicted miss the
+frame it fires. Detection therefore has two tiers:
+- **Predicted**: offset > lethal radius at 0x6FE8EE → count immediately.
+- **Confirmed** (covers moving targets + arcing travel time): at bullet
+  detonation, distance(impact, intended target) > failure radius → count.
+Tier choice per weapon: `Failure.Detect=predicted|confirmed|either` (default
+confirmed). Counts are consecutive per (firer, weapon slot, target); any
+qualifying hit resets.
+
+```ini
+[TECHNOTYPE]                       ; all tags exist for Primary./Secondary./
+                                   ; WeaponX./ElitePrimary./EliteSecondary./
+                                   ; EliteWeaponX. prefixes
+Primary.FailureLimit=5             ; 5 consecutive misses vs one target →
+                                   ; trigger the block below once (re-arms:
+                                   ; every further 5 misses fires it again)
+Primary.FailureBehavior=Blacklist  ; Blacklist | Reposition | Switch | Stalk | Correct
+Primary.Failure.AttachEffect=      ; see 6.1.2
+Primary.FailureWeapon=120mm        ; temporary weapon override on trigger
+Primary.FailureWeapon.Shots=5      ; revert after N shots …
+Primary.FailureWeapon.Time=100     ; … or after N frames (whichever first;
+                                   ; -1 disables that axis)
+Primary.FailureWeapon.Scatter.Min=0        ; absolute override …
+Primary.FailureWeapon.Scatter.Max=1
+Primary.FailureWeapon.Scatter.MinAdjust=-2 ; … or additive adjust …
+Primary.FailureWeapon.Scatter.MaxAdjust=2
+Primary.FailureWeapon.Scatter.MinMult=0.5  ; … or multiplier (checked in this
+Primary.FailureWeapon.Scatter.MaxMult=2    ; order: absolute > adjust > mult)
+```
+
+Behaviors:
+- **Blacklist** — never auto-target that object again until it changes cell.
+  (Implemented in target evaluation; ⚠ the EvaluateObject threat gates steal
+  relative branches — never `return 0` there, see handoff §6.)
+- **Reposition** — scatter-move one cell, then re-engage.
+- **Switch** — drop target, re-evaluate; old target eligible again after a
+  cooldown (`Failure.Switch.Cooldown=`, default ~300 frames).
+- **Stalk** — hold fire on that target until it moves. For static targets
+  (buildings) Stalk degrades to Switch automatically.
+- **Correct** — aim at a random cell adjacent to the target so splash damage
+  connects (reuses the §4.3 aim-at-cell machinery).
+
+#### 6.1.1 Scope + storage
+Per-instance state on our TechnoExt: {targetPtr, weaponSlot, consecutive
+misses, active override + shots/time remaining, blacklist set (target ptr +
+cell-at-blacklist)}. Bullet→(firer, slot, intended target) link stored on our
+BulletExt at fire time (we already own the fire seat). Invalidation: the
+engine-call-invalidates-your-guard rule applies — re-validate target pointers
+every read; blacklist entries die with the target.
+
+#### 6.1.2 Interop (all optional, all fail-soft)
+- **`Failure.AttachEffect`** — we do NOT reach into Phobos's AE internals
+  (co-loaded-ext trap, AbstractClass+0x18 lesson). Instead the tag names a
+  **warhead** we detonate on the firer at trigger time; that warhead carries
+  the Phobos `AttachEffect.*` tags (or anything else). Works with zero Phobos
+  coupling; if Phobos absent, the warhead simply does whatever it does.
+- **TraitExt** — our tags are plain INI keys, so TraitExt's INI-level
+  inheritance/random/modifier machinery applies to them for free. No runtime
+  linkage; nothing to detect. If deeper hooks are ever wanted, detect via
+  `GetModuleHandleA("TraitExt.dll")` and no-op when absent.
+- **TechnoAttachmentExt** — Reposition/Stalk must not order attached
+  (map-mode container) units around. Guard: skip movement behaviors for
+  objects whose locomotor CLSID is TAExt's private one; degrade to Switch.
+  No TAExt loaded → the check never matches → no cost.
+
+### 6.2 Scatter modifiers as timed effects (the "AE support" ask)
+Same pattern as BountyBonus/RadField profiles: warhead-applied **timed
+InaccuracyModifier** on our own ext (`InaccuracyModifier.Attach=`,
+`.Duration=`, `.Houses=`) rather than reading Phobos AE state. Multiplies
+with all other sources (invariant: sources multiply, never add).
+
+---
+
+## 7. Pillar: Spawned missiles (V3/DMISL family)
+
+Prior art: Ares/Antares **CustomMissile** (per-weapon custom missile types;
+hooks 0x6622E0 + takeoff cluster), Kratos **KamikazeTracker** ext
+(0x54E478–0x54E56D — proof that spawned missiles can chase a live target),
+Phobos spawner customizations (`Spawner.LimitRange/DelayFrames/
+AttackImmediately/RecycleRange…`) and cruise-missile hooks. RocketLocomotion
+`Process` is a **crowded window** (Antares CustomMissile owns several sites) —
+every hook here gets checked against the registry first.
+
+### 7.1 DynamicLocking (chase the moving target)
+```ini
+[SPAWNER-TECHNOTYPE]
+Missile.DynamicLocking=no          ; missile re-aims at the target's LIVE
+                                   ; position each frame instead of the cell
+                                   ; it was ordered at
+Missile.DynamicLocking.IntervalLimit=150 ; extra flight budget in frames:
+   ; at launch we record the planned ETA to the ORIGINAL cell; chasing may
+   ; extend flight time; once (actual elapsed − planned ETA) exceeds this,
+   ; the timeout behavior fires
+Missile.DynamicLocking.TimeoutBehavior=detonate ; detonate (self-destruct
+   ; airborne) | dive (straight down onto current position, normal warhead)
+   ; | weapon (detonate Missile.DynamicLocking.TimeoutWeapon= instead)
+Missile.DynamicLocking.TimeoutWeapon=
+```
+Feasibility: yes — the rocket locomotor flies a precomputed profile toward a
+stored destination; updating the destination each frame is exactly what
+Kratos's kamikaze mode does. The planned-ETA bookkeeping lives on our ext for
+the missile unit, computed at launch from the vanilla profile
+(distance/speed), so the budget check is one subtraction per frame.
+
+### 7.2 Missile inaccuracy (on the spawning TechnoType)
+Vanilla spawned missiles fly exactly to the ordered cell. New: the missile
+itself draws its miss at launch — tags live on the **spawner TechnoType**,
+the draw happens when the missile launches, using the merged scatter engine
+(synced RNG, zero-draw invariant applies: no tags → no draw):
+```ini
+Missile.Scatter.Max=2.0            ; cells; full per-axis/curve grammar from
+Missile.Scatter.Min=0.0            ; §6 available under this prefix
+```
+Scattered *destination*, not scattered flight — works with DynamicLocking
+(the chase offset re-applies the drawn miss around the live position).
+
+### 7.3 Per-rank / conditional custom missiles
+```ini
+Missile.Type=DMISL                 ; base (Ares CustomMissile remains usable)
+Missile.Type.Veteran=              ; rank overrides
+Missile.Type.Elite=
+Missile.Profiles=Blessed           ; Requirement-gated overrides, same
+                                   ; profile grammar as RadField §5.5
+```
+Selection happens at spawn creation (SpawnManager site), so each launched
+missile evaluates rank/conditions at that moment.
+
+### 7.4 Building "without ordnance" turret voxels (V3WO fix)
+Vehicles get `<Image>WO.vxl` swapping via Ares `NoSpawnAlt=yes`; buildings'
+turret draw path never consults spawn state. Fix: hook the building turret
+draw to select the WO turret voxel while `SpawnManager` has the missile out.
+`Building.NoSpawnAltTurret=yes` + optional `TurretWO=` explicit image name.
+RE item: building turret draw site + where vehicle NoSpawnAlt does the swap
+(read Ares source for the pattern, reimplement).
+
+### 7.5 Anti-air missile spawns
+Vanilla spawned missiles cannot engage air. Two gates to open: the spawner
+weapon's targeting check (projectile `AA=` equivalent for the spawn weapon)
+and the missile's destination logic (an air target's position is 3-D and
+moving — which is DynamicLocking with Z tracking). Ships as
+`Missile.CanTargetAir=yes`, requires `Missile.DynamicLocking=yes` (documented
+dependency; a fixed-cell missile vs a mover would always whiff). Timeout
+rules from 7.1 apply — an outrun missile dives or detonates.
+
+---
+
+## 8. Phase roadmap
 
 | Phase | Deliverable |
 |---|---|
@@ -481,12 +649,19 @@ Victim-side gates also supported: `RadField.Immune.Houses=`,
 | R1 | RadField core: spawn tag, cell-tint draw, damage pass, fade rates (signed), noise/splatter shapes |
 | R2 | Spreading + contamination trails; sub-cell radius damage |
 | R3 | Smooth-circle renderer + condition profiles (Requirement reuse) |
+| S1 | ~~ScatterExt merge~~ **DONE 2026-09-15** (CI green, deployed, ScatterExt de-listed) |
+| S2 | Observe the pending ScatterExt features in-game (staged rulesmd config); §20 distribution |
+| F1 | Failure tracking: detection tiers, counters, Blacklist/Switch/Stalk/Correct |
+| F2 | FailureWeapon override + scatter adjusts; Failure.AttachEffect warhead; Reposition |
+| SM1 | Missile.Scatter (destination draw at launch) |
+| SM2 | DynamicLocking + IntervalLimit + TimeoutBehavior; CanTargetAir |
+| SM3 | Per-rank/profile missiles; building WO turret voxel fix |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
 R1 can run early too — it needs only our own containers plus the shared
 warhead-detonate and logic-frame seats.
 
-## 7. Standing-rule compliance
+## 9. Standing-rule compliance
 - Encyclopedia consulted (RegisterDestruction cluster, CaptureManager cluster,
   locomotor hooks); M0 findings go back in.
 - Hook-overlap CI check wired in P0.

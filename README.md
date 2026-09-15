@@ -6,10 +6,13 @@ range logic, radiation fields. Full design in [DESIGN.md](DESIGN.md).
 
 ## Status
 
-**P0** — read-only probe build. One observation hook at `0x702E64`
-(`TechnoClass::RegisterDestruction`) logs every kill event: killer/victim
-types and houses, alliance, victim Cost/Soylent, death cell. No behaviour is
-modified.
+- **P0 verified in-game** — the `0x702E64` kill probe logged live skirmish
+  data (registers + victim liveness runtime-confirmed).
+- **ScatterExt merged (2026-09-15)** — RangeScatter, per-axis scatter,
+  ROF-by-range, curves/easing, InaccuracyModifier now live here; the
+  ScatterExt repo is archived knowledge (its DESIGN.md + handoff stay
+  authoritative for scatter internals). Log prefix is now `[WeaponExt]`.
+  ScatterExt.dll must NOT be co-loaded with this DLL.
 
 ## Building
 
