@@ -1,9 +1,10 @@
 # WeaponExt — Design Document
 
 Standalone Syringe DLL for Yuri's Revenge, co-loaded with Antares (+ optionally
-Phobos). Seven pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
+Phobos). Eight pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
 unit/building properties** (power & range logic), **Radiation**,
-**Scatter & fire control** (absorbed from ScatterExt), **Spawned missiles**.
+**Scatter & fire control** (absorbed from ScatterExt), **Spawned missiles**,
+**Limboed cargo** (garrison / passengers / bunker).
 
 Status: P0 verified in-game 2026-09-14 (bounty probe). ScatterExt merged
 2026-09-15 — its DESIGN.md (22 sections) and HANDOFF-TO-WEAPONEXT.md in the
@@ -81,6 +82,20 @@ auras/warheads.
 - Nobody has: noise/messy footprints, sub-cell fields, smooth-drawn circles,
   conditional spreading, contamination trails, signed shrink/fade rates, or
   condition-gated rad properties.
+
+### Limboed cargo
+- Vanilla: `BuildingClass::KillOccupants(TechnoClass*)` @ `0x4585C0`
+  (`BuildingClass.h:193`), driven by `Assaulter=yes`. All-or-nothing,
+  garrison-only, warhead has no say. **No passenger equivalent exists.**
+- Antares/Ares hook `0x458729` *inside* that function (raid status, ESI =
+  building) — co-tenancy to respect, but not our seat.
+- Phobos: `PassengerDeletion.*` (transport eats its own cargo, with
+  `.DontScore`), `DriverKilled.KillPassengers`, `OpenTransport.RangeBonus/
+  DamageMultiplier` — adjacent, none warhead-driven. Its warhead effects
+  **explicitly skip limbo**: `Ext/WarheadType/Body.cpp:114` guards on
+  `!IsOnMap || !IsAlive || InLimbo || IsSinking`.
+- Nobody has: warhead-driven damage to cargo of any kind, ejection-based
+  correct death animations, or per-container filters.
 
 ---
 
@@ -629,7 +644,105 @@ rules from 7.1 apply — an outrun missile dives or detonates.
 
 ---
 
-## 8. Phase roadmap
+## 8. Pillar: Limboed cargo (garrison / passengers / bunker)
+
+One primitive: **units the engine is holding in limbo**, which warheads
+currently cannot reach. `ObjectClass::InLimbo` is documented in YRpp as "act as
+if it doesn't exist" — that is exactly why damage, AttachEffects and position
+effects all miss them ([[yr-garrisoned-infantry-are-limboed]]).
+
+### 8.0 The three containers (all verified in YRpp, no Phobos coupling)
+| Container | Type | Where |
+|---|---|---|
+| Garrison occupants | `DynamicVectorClass<InfantryClass*> Occupants` | `BuildingClass.h:314` |
+| Transport cargo | `PassengersClass { int NumPassengers; FootClass* FirstPassenger; }` | `TechnoClass.h:124`; walk via `ObjectClass::NextObject` (`ObjectClass.h:291` — "next object in the same cell **or transport**") |
+| Tank/battle bunker | `BuildingClass::BunkerLinkedItem` (single link) | already mapped during BunkerExt |
+
+⚠ **Open-topped passengers are the same container but a different state.** Per
+the encyclopedia (`Ext-Building-Occupancy.md`), open-topped cargo is registered
+into the **logic layer** and fires its own weapons — so it is partially present
+while still limboed. Treat it as its own filter case (`Passengers.OpenTopped=`)
+rather than assuming all passengers are equally invisible.
+
+### 8.1 What vanilla gives us (and why this is new ground)
+`BuildingClass::KillOccupants(TechnoClass* pAssaulter)` → **`0x4585C0`**
+(`BuildingClass.h:193`), driven by `Assaulter=yes`. It is all-or-nothing,
+garrison-only, and the warhead has no say. There is no passenger equivalent.
+Adjacent prior art that is *not* this feature: Phobos `PassengerDeletion.*`
+(the transport eats its own cargo) and `DriverKilled.KillPassengers` — neither
+is warhead-driven.
+
+Co-tenancy: **Antares and Ares both hook `0x458729`**, *inside* `KillOccupants`
+(`BuildingClass_KillOccupiers_AllOccupantsKilled`, ESI = building, for raid
+status). We do **not** hook this function at all — our trigger is the warhead
+detonation seat we already own (shared with §1.5 bounty multipliers and §5.6
+RadField spawning: one seat, three features).
+
+### 8.2 Ejection is the design, not an option
+Rather than faking a death animation, **unlimbo the contained unit onto a free
+cell, then detonate the real warhead on it.** Correct per-warhead death comes
+free — burned, gibbed, vaporized, electrocuted — along with veterancy, score,
+EVA and crate logic. Faking it would get each of those subtly wrong, and
+differently wrong per warhead.
+
+This also solves the buff-effect problem cleanly: Phobos skips limboed targets
+outright (`Ext/WarheadType/Body.cpp:114` — `!IsOnMap || !IsAlive || InLimbo ||
+IsSinking`), so an ejected unit is momentarily a **normal on-map target** and
+Phobos's AttachEffect sees it with no interop code on our side. (Remember
+`CellSpread!=0` is required for Phobos warhead effects to apply at all —
+[[phobos-warhead-effects-need-cellspread]].)
+
+```ini
+[WARHEAD]
+; Prefixes: Occupants. (garrison) · Passengers. (cargo) · Bunker. (tank bunker)
+; `Contained.` sets all three at once; a specific prefix overrides it.
+Occupants.Damage=200          ; 0/unset = this warhead ignores cargo entirely
+Occupants.Warhead=            ; warhead to use on them (default: this warhead)
+Occupants.Eject=damage        ; no      = damage in place, generic death
+                              ; damage  = eject, detonate, survivors re-enter
+                              ; always  = eject, detonate, survivors stay out
+Occupants.Eject.Fallback=inplace ; inplace | skip  (when no free cell exists)
+Occupants.Max=-1              ; cap affected per detonation (-1 = all)
+Occupants.Houses=all          ; whose cargo is eligible
+Occupants.Types=              ; optional type filter (mixed list, as §1.2)
+Passengers.OpenTopped=yes     ; include open-topped (logic-layer) cargo
+```
+
+### 8.3 The four hazards, designed for up front
+1. **Unlimbo can fail** — a bunkered building hemmed in by walls has no free
+   cell. Cell search is bounded; on failure `Eject.Fallback` decides between
+   killing in place (no per-warhead anim) or skipping. Never leave a unit
+   half-ejected.
+2. **Never mutate a container while iterating it.** Snapshot the pointers into
+   a fixed-capacity local array first, iterate the copy, and **re-validate
+   liveness before every single step** — `Unlimbo` and damage both re-enter the
+   engine and can invalidate pointers mid-hook
+   ([[engine-call-invalidates-your-guard]]).
+3. **Cell choice must be deterministic** or it desyncs. Fixed scan order —
+   foundation cells first, then expanding rings in a fixed compass order,
+   bounded radius. **No RNG at all**, not even the synced stream, so the cost
+   is zero and the sync argument is trivial.
+4. **Double-kill guard.** If the same detonation destroys the container, vanilla
+   teardown kills the remaining cargo itself (`ClearBunker()` is literally
+   documented as "content is dead — chronosphered away or died inside"). Snapshot
+   before container damage, and track a per-detonation flag so cargo is never
+   killed twice.
+
+### 8.4 The trap the container structure hides
+Garrison firing uses a **single shared occupy-weapon slot arbitrated by
+`FiringOccupantIndex`** (encyclopedia, `Ext-Building-Occupancy.md`). Removing an
+occupant from the middle of `Occupants` can therefore leave that index dangling
+or pointing at the wrong infantryman — a state vanilla only ever reaches through
+its own removal paths. **RE item, do before writing the removal code:**
+disassemble `0x4585C0` and mirror exactly what vanilla does to `Occupants` +
+`FiringOccupantIndex` when it kills occupants; do not invent our own removal.
+
+Other RE items: `Unlimbo` placement semantics for infantry vs vehicles; whether
+bunker teardown needs `ClearBunker` called explicitly after we empty the link.
+
+---
+
+## 9. Phase roadmap
 
 | Phase | Deliverable |
 |---|---|
@@ -656,12 +769,17 @@ rules from 7.1 apply — an outrun missile dives or detonates.
 | SM1 | Missile.Scatter (destination draw at launch) |
 | SM2 | DynamicLocking + IntervalLimit + TimeoutBehavior; CanTargetAir |
 | SM3 | Per-rank/profile missiles; building WO turret voxel fix |
+| L0 | RE `0x4585C0` KillOccupants: mirror vanilla's `Occupants` + `FiringOccupantIndex` bookkeeping (§8.4); probe logging container contents at detonation |
+| L1 | Passengers + Occupants damage with `Eject=no` (in-place), snapshot/liveness discipline |
+| L2 | Ejection path: deterministic cell search, `Eject=damage/always`, fallbacks, double-kill guard |
+| L3 | Bunker link, open-topped filter, house/type filters, `Contained.` shorthand |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
 R1 can run early too — it needs only our own containers plus the shared
-warhead-detonate and logic-frame seats.
+warhead-detonate and logic-frame seats. L-phases share that same detonate seat
+but need L0's RE before any removal code is written.
 
-## 9. Standing-rule compliance
+## 10. Standing-rule compliance
 - Encyclopedia consulted (RegisterDestruction cluster, CaptureManager cluster,
   locomotor hooks); M0 findings go back in.
 - Hook-overlap CI check wired in P0.
