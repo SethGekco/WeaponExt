@@ -19,23 +19,23 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	INI_EX exINI(pINI);
 
 	this->WarheadSize_Exempt.Read(exINI, section, "WarheadSize.Exempt");
-	this->WarheadSize_Min.Read(exINI, section, "WarheadSize.Min");
-	this->WarheadSize_Max.Read(exINI, section, "WarheadSize.Max");
+	this->WarheadSize_IgnoreSpreadBelow.Read(exINI, section, "WarheadSize.IgnoreSpreadBelow");
+	this->WarheadSize_IgnoreSpreadAbove.Read(exINI, section, "WarheadSize.IgnoreSpreadAbove");
+	this->WarheadSize_MultiplierCap.Read(exINI, section, "WarheadSize.MultiplierCap");
+	this->WarheadSize_MultiplierFloor.Read(exINI, section, "WarheadSize.MultiplierFloor");
+	this->WarheadSize_SpreadCap.Read(exINI, section, "WarheadSize.SpreadCap");
+	this->WarheadSize_SpreadFloor.Read(exINI, section, "WarheadSize.SpreadFloor");
 	this->WarheadSize_FromZero.Read(exINI, section, "WarheadSize.FromZero");
 
-	if (this->WarheadSize_Min.isset() && this->WarheadSize_Max.isset()
-		&& this->WarheadSize_Min.Get() > this->WarheadSize_Max.Get())
+	if (this->HasAnyWarheadSize())
 	{
-		Debug::Log("[WeaponExt] %s: WarheadSize.Min=%.2f > WarheadSize.Max=%.2f; "
-			"Max wins.\n", section, this->WarheadSize_Min.Get(), this->WarheadSize_Max.Get());
-	}
-
-	if (this->WarheadSize_Exempt || this->WarheadSize_Min.isset()
-		|| this->WarheadSize_Max.isset() || this->WarheadSize_FromZero > 0.0)
-	{
-		Debug::Log("[WeaponExt] %s: WarheadSize exempt=%d min=%.2f max=%.2f fromZero=%.2f\n",
+		// -1 in the log means "not set here, [CombatDamage] applies".
+		Debug::Log("[WeaponExt] %s: WarheadSize exempt=%d ignoreBelow=%.2f ignoreAbove=%.2f "
+			"multCap=%.2f multFloor=%.2f spreadCap=%.2f spreadFloor=%.2f fromZero=%.2f\n",
 			section, (int)this->WarheadSize_Exempt.Get(),
-			this->WarheadSize_Min.Get(-1.0), this->WarheadSize_Max.Get(-1.0),
+			this->WarheadSize_IgnoreSpreadBelow.Get(-1.0), this->WarheadSize_IgnoreSpreadAbove.Get(-1.0),
+			this->WarheadSize_MultiplierCap.Get(-1.0), this->WarheadSize_MultiplierFloor.Get(-1.0),
+			this->WarheadSize_SpreadCap.Get(-1.0), this->WarheadSize_SpreadFloor.Get(-1.0),
 			this->WarheadSize_FromZero.Get());
 	}
 }
@@ -45,8 +45,12 @@ void WarheadTypeExt::ExtData::Serialize(T& Stm)
 {
 	Stm
 		.Process(this->WarheadSize_Exempt)
-		.Process(this->WarheadSize_Min)
-		.Process(this->WarheadSize_Max)
+		.Process(this->WarheadSize_IgnoreSpreadBelow)
+		.Process(this->WarheadSize_IgnoreSpreadAbove)
+		.Process(this->WarheadSize_MultiplierCap)
+		.Process(this->WarheadSize_MultiplierFloor)
+		.Process(this->WarheadSize_SpreadCap)
+		.Process(this->WarheadSize_SpreadFloor)
 		.Process(this->WarheadSize_FromZero)
 		;
 }

@@ -767,13 +767,25 @@ every client computes the same number. No RNG is consumed.
 [Americans]                      ; country section (read by WeaponExt directly —
 WarheadSize.Multiplier=1.25      ;   no linkage to CountryExt.dll needed)
 
+[CombatDamage]                   ; universal limits — all unset by default (no limit)
+; Which warheads get scaled at all (compared against the warhead's OWN CellSpread):
+WarheadSize.IgnoreSpreadBelow=1.0  ; CellSpread under 1.0 → never scaled
+WarheadSize.IgnoreSpreadAbove=     ; CellSpread over this → never scaled
+; How far a warhead can be scaled:
+WarheadSize.MultiplierCap=2.0    ; the combined multiplier never goes above ×2.0
+WarheadSize.MultiplierFloor=0.5  ; …or below ×0.5 (only matters for shrinking)
+WarheadSize.SpreadCap=8          ; enlarging stops at 8 cells; a warhead that is
+                                 ;   already bigger than 8 is left as it is
+WarheadSize.SpreadFloor=0.5      ; shrinking stops at 0.5 cells; one already
+                                 ;   smaller is left as it is
+
 [SOMEWARHEAD]
 WarheadSize.Exempt=no            ; yes = never scaled (nukes, SW, rad sites…)
-WarheadSize.Min=                 ; clamp on the SCALED CellSpread (cells); unset = none
-WarheadSize.Max=                 ; ditto
+; Any of the six [CombatDamage] keys above can be set here too, and wins over
+; the universal value for this warhead only.
 WarheadSize.FromZero=0           ; CellSpread=0 × anything is 0. When > 0, a
-                                 ;   CellSpread=0 warhead under a multiplier ≠ 1
-                                 ;   is treated as this spread before scaling.
+                                 ;   CellSpread=0 warhead is treated as this
+                                 ;   spread before filtering and scaling.
                                  ;   (Phobos warhead effects need CellSpread≠0 —
                                  ;   this is what lets scaling switch them on.)
 
@@ -783,9 +795,19 @@ WarheadSize.Attach=1.5
 WarheadSize.Attach.Duration=300
 WarheadSize.Attach.Houses=owner,allies
 ```
-Order: `scaled = (CellSpread or FromZero) × multiplier`, then Min, then Max
-(so Max wins a Min>Max misconfiguration; logged at parse). Negative
-multipliers clamp to 0. All sources multiply (standing invariant).
+Evaluation order, per detonation:
+1. Combine all sources (they multiply — standing invariant), then apply
+   `MultiplierCap` / `MultiplierFloor`. Negative → 0. Exactly 1.0 → stop.
+2. Base = the warhead's CellSpread, or `FromZero` if CellSpread is 0 (no
+   `FromZero` → stop).
+3. Base outside `IgnoreSpreadBelow`…`IgnoreSpreadAbove` → stop.
+4. `scaled = base × multiplier`, then `SpreadCap` (when enlarging) or
+   `SpreadFloor` (when shrinking). Limits only stop a change partway; they
+   never reverse it.
+
+Per-warhead value > `[CombatDamage]` value > no limit. A map's
+`[CombatDamage]` overrides the rules one (read through Phobos's
+`0x679A15` LoadBeforeTypeData seat, once per INI).
 **Zero-cost invariant:** multiplier exactly 1.0 → no frame, no write.
 
 Attaching via Phobos AttachEffect: per §6.1.2 we don't read Phobos AE state;
@@ -885,7 +907,7 @@ radius.
 | L1 | Passengers + Occupants damage with `Eject=no` (in-place), snapshot/liveness discipline |
 | L2 | Ejection path: deterministic cell search, `Eject=damage/always`, fallbacks, double-kill guard |
 | L3 | Bunker link, open-topped filter, house/type filters, `Contained.` shorthand |
-| W1 | **Started.** Country `WarheadSize.Multiplier`, `WarheadSize.Exempt/Min/Max/FromZero`, Detonate scale-and-restore (§9.2–9.3) |
+| W1 | **Started.** Country `WarheadSize.Multiplier`; `[CombatDamage]` + per-warhead `IgnoreSpreadBelow/Above`, `MultiplierCap/Floor`, `SpreadCap/Floor`; `Exempt`, `FromZero`; Detonate scale-and-restore (§9.2–9.3) |
 | W2 | `WarheadSize.Attach` timed effect; fire-time capture on BulletExt; AnimList threshold swap |
 | W3 | Overflow damage pass beyond the engine spread cap |
 | W4 | RE anim draw seat; true SHP/voxel draw scaling |

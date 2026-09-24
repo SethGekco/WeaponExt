@@ -68,6 +68,90 @@ namespace
 		return it == CountryMultiplier.end() ? 1.0 : it->second;
 	}
 
+	// ---- Universal limits ([CombatDamage]) --------------------------------
+	// Unset = no limit. Each can be overridden per warhead with the same key.
+	struct GlobalLimits
+	{
+		Nullable<double> IgnoreSpreadBelow;
+		Nullable<double> IgnoreSpreadAbove;
+		Nullable<double> MultiplierCap;
+		Nullable<double> MultiplierFloor;
+		Nullable<double> SpreadCap;
+		Nullable<double> SpreadFloor;
+	} Global;
+
+	// Warhead value if set, else the global, else "no limit" (returns false).
+	bool Resolve(const Nullable<double>* pLocal, const Nullable<double>& global, double& out)
+	{
+		if (pLocal && pLocal->isset())
+		{
+			out = pLocal->Get();
+			return true;
+		}
+		if (global.isset())
+		{
+			out = global.Get();
+			return true;
+		}
+		return false;
+	}
+
+	// The CellSpread this warhead should detonate with, or a negative value
+	// for "leave it alone". Pure function of INI data + the multiplier, so
+	// every client computes the same value -- required, because CellSpread
+	// decides who is damaged.
+	double ScaledSpread(const WarheadTypeExt::ExtData* pExt, double original, double multiplier)
+	{
+		auto L = [pExt](Nullable<double> WarheadTypeExt::ExtData::* m) -> const Nullable<double>*
+			{ return pExt ? &(pExt->*m) : nullptr; };
+		double v;
+
+		// 1. Clamp the multiplier itself.
+		if (Resolve(L(&WarheadTypeExt::ExtData::WarheadSize_MultiplierCap), Global.MultiplierCap, v)
+			&& multiplier > v)
+			multiplier = v;
+		if (Resolve(L(&WarheadTypeExt::ExtData::WarheadSize_MultiplierFloor), Global.MultiplierFloor, v)
+			&& multiplier < v)
+			multiplier = v;
+		if (multiplier < 0.0)
+			multiplier = 0.0;
+		if (multiplier == 1.0)
+			return -1.0;
+
+		// 2. The spread we scale from (FromZero stands in for CellSpread=0).
+		double base = original;
+		if (base <= 0.0)
+		{
+			if (!pExt || pExt->WarheadSize_FromZero <= 0.0)
+				return -1.0;
+			base = pExt->WarheadSize_FromZero;
+		}
+
+		// 3. Filter: warheads outside the eligible band are never touched.
+		if (Resolve(L(&WarheadTypeExt::ExtData::WarheadSize_IgnoreSpreadBelow), Global.IgnoreSpreadBelow, v)
+			&& base < v)
+			return -1.0;
+		if (Resolve(L(&WarheadTypeExt::ExtData::WarheadSize_IgnoreSpreadAbove), Global.IgnoreSpreadAbove, v)
+			&& base > v)
+			return -1.0;
+
+		// 4. Scale, then limit the result. Limits only ever stop the change
+		// partway -- enlarging never ends smaller than the base because the
+		// cap sits below it, and shrinking never ends larger because the floor
+		// sits above it.
+		double scaled = base * multiplier;
+		if (multiplier > 1.0
+			&& Resolve(L(&WarheadTypeExt::ExtData::WarheadSize_SpreadCap), Global.SpreadCap, v)
+			&& scaled > v)
+			scaled = v > base ? v : base;
+		if (multiplier < 1.0
+			&& Resolve(L(&WarheadTypeExt::ExtData::WarheadSize_SpreadFloor), Global.SpreadFloor, v)
+			&& scaled < v)
+			scaled = v < base ? v : base;
+
+		return scaled;
+	}
+
 	// ---- Scale/restore stack --------------------------------------------
 	struct Frame
 	{
@@ -146,6 +230,36 @@ DEFINE_HOOK(0x51214F, HouseTypeClass_LoadFromINI_WeaponExt, 0x5)
 	return 0;
 }
 
+// Universal limits from [CombatDamage]. Same seat, register and stack offset as
+// Phobos's RulesData_LoadBeforeTypeData (src/Ext/Rules/Body.cpp). Runs once
+// per INI (rules, then map), and Read() only overwrites when the key is
+// present, so a map can override the rules value.
+DEFINE_HOOK(0x679A15, RulesData_LoadBeforeTypeData_WeaponExt, 0x6)
+{
+	GET_STACK(CCINIClass*, pINI, 0x4);
+
+	if (!pINI)
+		return 0;
+
+	constexpr const char* section = "CombatDamage";
+	INI_EX exINI(pINI);
+
+	Global.IgnoreSpreadBelow.Read(exINI, section, "WarheadSize.IgnoreSpreadBelow");
+	Global.IgnoreSpreadAbove.Read(exINI, section, "WarheadSize.IgnoreSpreadAbove");
+	Global.MultiplierCap.Read(exINI, section, "WarheadSize.MultiplierCap");
+	Global.MultiplierFloor.Read(exINI, section, "WarheadSize.MultiplierFloor");
+	Global.SpreadCap.Read(exINI, section, "WarheadSize.SpreadCap");
+	Global.SpreadFloor.Read(exINI, section, "WarheadSize.SpreadFloor");
+
+	Debug::Log("[WeaponExt] [CombatDamage] WarheadSize ignoreBelow=%.2f ignoreAbove=%.2f "
+		"multCap=%.2f multFloor=%.2f spreadCap=%.2f spreadFloor=%.2f (-1 = unset)\n",
+		Global.IgnoreSpreadBelow.Get(-1.0), Global.IgnoreSpreadAbove.Get(-1.0),
+		Global.MultiplierCap.Get(-1.0), Global.MultiplierFloor.Get(-1.0),
+		Global.SpreadCap.Get(-1.0), Global.SpreadFloor.Get(-1.0));
+
+	return 0;
+}
+
 // Scale on the way in. 8 bytes as Phobos declares it; return 0 so the stolen
 // bytes re-execute unchanged.
 DEFINE_HOOK(0x4690C1, BulletClass_Detonate_WarheadSizeApply, 0x8)
@@ -173,9 +287,9 @@ DEFINE_HOOK(0x4690C1, BulletClass_Detonate_WarheadSizeApply, 0x8)
 	}
 
 	const SpreadT original = OriginalSpread(pWH);
-	const double scaled = pExt
-		? pExt->ScaledSpread((double)original, multiplier)
-		: ((double)original * multiplier);
+	const double scaled = ScaledSpread(pExt, (double)original, multiplier);
+	if (scaled < 0.0)
+		return 0;
 
 	Frames[FrameCount++] = { pThis, pWH, R->EBP(), pWH->CellSpread };
 	pWH->CellSpread = (SpreadT)scaled;

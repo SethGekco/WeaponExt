@@ -23,21 +23,30 @@ public:
 		// superweapon warheads, rad sites -- anything tuned to an exact radius.
 		Valueable<bool> WarheadSize_Exempt;
 
-		// Clamp on the SCALED CellSpread, in cells. Nullable so an unset bound
-		// is no bound at all rather than a bound of zero.
-		Nullable<double> WarheadSize_Min;
-		Nullable<double> WarheadSize_Max;
+		// Per-warhead overrides of the [CombatDamage] limits (section 9.1).
+		// Nullable: unset falls through to the global, and an unset global is
+		// no limit at all.
+		Nullable<double> WarheadSize_IgnoreSpreadBelow;
+		Nullable<double> WarheadSize_IgnoreSpreadAbove;
+		Nullable<double> WarheadSize_MultiplierCap;
+		Nullable<double> WarheadSize_MultiplierFloor;
+		Nullable<double> WarheadSize_SpreadCap;
+		Nullable<double> WarheadSize_SpreadFloor;
 
 		// CellSpread=0 times anything is still 0. When this is > 0, a
-		// CellSpread=0 warhead under a multiplier other than 1.0 is treated as
-		// having this spread before scaling. 0 (default) keeps it at 0, which
-		// matters because Phobos warhead effects only apply with CellSpread!=0.
+		// CellSpread=0 warhead is treated as having this spread before
+		// filtering and scaling. 0 (default) keeps it at 0, which matters
+		// because Phobos warhead effects only apply with CellSpread!=0.
 		Valueable<double> WarheadSize_FromZero;
 
 		ExtData(WarheadTypeClass* OwnerObject) : Extension<WarheadTypeClass>(OwnerObject)
 			, WarheadSize_Exempt { false }
-			, WarheadSize_Min { }
-			, WarheadSize_Max { }
+			, WarheadSize_IgnoreSpreadBelow { }
+			, WarheadSize_IgnoreSpreadAbove { }
+			, WarheadSize_MultiplierCap { }
+			, WarheadSize_MultiplierFloor { }
+			, WarheadSize_SpreadCap { }
+			, WarheadSize_SpreadFloor { }
 			, WarheadSize_FromZero { 0.0 }
 		{ }
 
@@ -50,29 +59,13 @@ public:
 		virtual void LoadFromStream(PhobosStreamReader& Stm) override;
 		virtual void SaveToStream(PhobosStreamWriter& Stm) override;
 
-		// The CellSpread this warhead should detonate with under `multiplier`.
-		// Pure function of INI data + the multiplier, so every client computes
-		// the same value -- required, because CellSpread decides who is damaged.
-		double ScaledSpread(double original, double multiplier) const
+		bool HasAnyWarheadSize() const
 		{
-			double base = original;
-			if (base <= 0.0)
-			{
-				if (WarheadSize_FromZero <= 0.0)
-					return original;
-				base = WarheadSize_FromZero;
-			}
-
-			double scaled = base * multiplier;
-
-			if (WarheadSize_Min.isset() && scaled < WarheadSize_Min.Get())
-				scaled = WarheadSize_Min.Get();
-			if (WarheadSize_Max.isset() && scaled > WarheadSize_Max.Get())
-				scaled = WarheadSize_Max.Get();
-			if (scaled < 0.0)
-				scaled = 0.0;
-
-			return scaled;
+			return WarheadSize_Exempt
+				|| WarheadSize_IgnoreSpreadBelow.isset() || WarheadSize_IgnoreSpreadAbove.isset()
+				|| WarheadSize_MultiplierCap.isset() || WarheadSize_MultiplierFloor.isset()
+				|| WarheadSize_SpreadCap.isset() || WarheadSize_SpreadFloor.isset()
+				|| WarheadSize_FromZero > 0.0;
 		}
 
 	private:
