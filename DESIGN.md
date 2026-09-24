@@ -805,6 +805,42 @@ Evaluation order, per detonation:
    `SpreadFloor` (when shrinking). Limits only stop a change partway; they
    never reverse it.
 
+#### Per-warhead overrides — worked example
+All six `[CombatDamage]` keys can also go on a warhead. A key set on a
+warhead replaces the universal value **for that warhead only**; keys it does
+not set still come from `[CombatDamage]`. Using the `[CombatDamage]` values
+above (`IgnoreSpreadBelow=1.0`, `SpreadCap=8`, `SpreadFloor=0.5`):
+```ini
+[FlakWH]                         ; CellSpread=0.5
+WarheadSize.IgnoreSpreadBelow=0  ; opt back IN: the universal filter skips
+                                 ;   anything under 1.0, so without this line
+                                 ;   FlakWH would never be enlarged. 0 = no
+                                 ;   lower filter for this warhead.
+                                 ;   SpreadCap/Floor still come from
+                                 ;   [CombatDamage] (8 / 0.5).
+
+[ShellWH]                        ; CellSpread=2
+WarheadSize.SpreadCap=3          ; tighter limit: this warhead stops growing at
+                                 ;   3 cells, even though others may reach 8
+WarheadSize.SpreadFloor=1.5      ; and stops shrinking at 1.5 cells
+                                 ;   (universal floor is 0.5)
+
+[BigBombWH]                      ; CellSpread=6
+WarheadSize.MultiplierCap=1.2    ; this one only ever gets ×1.2 at most,
+                                 ;   while others can reach the universal ×2.0
+
+[NukeWH]
+WarheadSize.Exempt=yes           ; never scaled at all, whatever the limits say
+```
+With an American ×1.25 multiplier, those come out as: FlakWH 0.5 → 0.625;
+ShellWH 2 → 2.5 (under its cap of 3); BigBombWH 6 → 7.2 (×1.2, not ×1.25);
+NukeWH unchanged.
+
+`IgnoreSpreadBelow` / `IgnoreSpreadAbove` are a **filter**: they decide
+*whether* a warhead is scaled at all, by comparing its own (unscaled)
+CellSpread. The `Cap` / `Floor` keys are **limits**: they decide *how far*
+an eligible warhead can be scaled.
+
 Per-warhead value > `[CombatDamage]` value > no limit. A map's
 `[CombatDamage]` overrides the rules one (read through Phobos's
 `0x679A15` LoadBeforeTypeData seat, once per INI).
