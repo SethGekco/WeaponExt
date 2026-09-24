@@ -1,10 +1,10 @@
 # WeaponExt — Design Document
 
 Standalone Syringe DLL for Yuri's Revenge, co-loaded with Antares (+ optionally
-Phobos). Eight pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
+Phobos). Nine pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
 unit/building properties** (power & range logic), **Radiation**,
 **Scatter & fire control** (absorbed from ScatterExt), **Spawned missiles**,
-**Limboed cargo** (garrison / passengers / bunker).
+**Limboed cargo** (garrison / passengers / bunker), **Warhead size scaling**.
 
 Status: P0 verified in-game 2026-09-14 (bounty probe). ScatterExt merged
 2026-09-15 — its DESIGN.md (22 sections) and HANDOFF-TO-WEAPONEXT.md in the
@@ -742,7 +742,119 @@ bunker teardown needs `ClearBunker` called explicitly after we empty the link.
 
 ---
 
-## 9. Phase roadmap
+## 9. Pillar: Warhead size scaling
+
+Multipliers that grow (or shrink) a warhead's `CellSpread`, sourced from the
+firing house's **country** and from **timed effects**, with per-warhead
+exemptions and clamps — plus the matching question of drawing explosions
+bigger.
+
+### 9.0 The core problem
+`CellSpread` lives on the shared `WarheadTypeClass`; every house detonates
+the same object. There is no per-house field to set. Options considered:
+1. **Patch the register inside `MapClass::DamageArea`** where the spread is
+   loaded. Cleanest for vanilla damage, but Phobos reads `CellSpread` itself
+   for its warhead effects (AE, shields, …) and would see the unscaled radius.
+2. **Scale-and-restore around `BulletClass::Detonate`** — write the scaled
+   value on entry, put it back on exit. Everything inside the detonation sees
+   it, co-loaded extensions included. **Chosen.**
+
+Sync: the scaled value is a pure function of INI data + the firing house, so
+every client computes the same number. No RNG is consumed.
+
+### 9.1 Tags
+```ini
+[Americans]                      ; country section (read by WeaponExt directly —
+WarheadSize.Multiplier=1.25      ;   no linkage to CountryExt.dll needed)
+
+[SOMEWARHEAD]
+WarheadSize.Exempt=no            ; yes = never scaled (nukes, SW, rad sites…)
+WarheadSize.Min=                 ; clamp on the SCALED CellSpread (cells); unset = none
+WarheadSize.Max=                 ; ditto
+WarheadSize.FromZero=0           ; CellSpread=0 × anything is 0. When > 0, a
+                                 ;   CellSpread=0 warhead under a multiplier ≠ 1
+                                 ;   is treated as this spread before scaling.
+                                 ;   (Phobos warhead effects need CellSpread≠0 —
+                                 ;   this is what lets scaling switch them on.)
+
+; step 2 — timed effect, same pattern as BountyBonus / InaccuracyModifier.Attach
+[BUFFWARHEAD]
+WarheadSize.Attach=1.5
+WarheadSize.Attach.Duration=300
+WarheadSize.Attach.Houses=owner,allies
+```
+Order: `scaled = (CellSpread or FromZero) × multiplier`, then Min, then Max
+(so Max wins a Min>Max misconfiguration; logged at parse). Negative
+multipliers clamp to 0. All sources multiply (standing invariant).
+**Zero-cost invariant:** multiplier exactly 1.0 → no frame, no write.
+
+Attaching via Phobos AttachEffect: per §6.1.2 we don't read Phobos AE state;
+a Phobos AE can instead detonate `BUFFWARHEAD` to apply ours.
+
+### 9.2 Hook seats (step 1)
+Both co-tenanted with Phobos (`src/Ext/Bullet/Hooks.DetonateLogics.cpp`),
+both `return 0` on Phobos's normal path; sizes match Phobos's declarations:
+
+| Addr | Size | Phobos co-tenant | Use |
+|---|---|---|---|
+| `0x4690C1` | 8 | `BulletClass_Logics_DetonateOnAllMapObjects` (ESI=bullet) | apply |
+| `0x469AA4` | 5 | `BulletClass_Logics_Extras` (ESI=bullet) | restore |
+
+Detonate has an EBP frame (Phobos reads coords at `[ebp+0x8]`).
+Warhead container: Phobos's `0x75D1A9` CTOR (EBP), `0x75E5C8` SDDTOR (ESI),
+`0x75DEA0` LoadFromINI (ESI, INI at `[esp+0x150]`). Country tag: Phobos's
+`0x51214F`/`0x51215A` HouseType LoadFromINI (EBX, INI at `[ebp+0x8]`).
+
+### 9.3 Nesting / early-exit discipline
+- A detonation kills something whose death weapon detonates **inside** the
+  outer DamageArea → frames form a LIFO stack.
+- Same warhead nested → the inner frame scales from the **true original**
+  (oldest live frame for that warhead), never from the outer scaled value.
+- Early exits that skip the restore seat (e.g. Phobos returning
+  `ReturnFromFunction` at `0x4690C1` after our handler ran) → each frame
+  records its Detonate's EBP. On any later apply, frames with EBP ≤ current
+  EBP have provably returned (a live caller sits higher on the stack) and are
+  unwound. On restore, deeper frames (EBP < current) unwind first.
+
+### 9.4 Beyond the engine's spread cap (step 3)
+Vanilla area damage iterates a fixed cell-offset table (roughly 10–11 cells,
+**to verify**); `WarheadSize.Max=15` cannot reach past it on its own. The
+extra ring needs our own damage pass (the RadField §5.6 machinery):
+`WarheadSize.Overflow=yes` damages objects between the table cap and the
+scaled radius, with vanilla `PercentAtMax` falloff extended over the full
+radius.
+
+### 9.5 Bigger explosion drawing (steps 2 and 4)
+- **Step 2 — art swap (zero RE):** `WarheadSize.AnimList.Scaled=` +
+  `WarheadSize.AnimList.Thresholds=` pick larger pre-drawn anims when the
+  effective multiplier crosses a threshold. Co-seat: Phobos
+  `0x469C46` `BulletClass_Logics_DamageAnimSelected` (EBX = anim type) —
+  that handler returns `SkipGameCode`, so we cannot co-hook it blindly; RE
+  item: pick a seat after it or override via its own tags.
+- **Step 4 — true scaling:** voxel anims scale via their draw matrix (easy).
+  SHP anims: the shape blitter is 1:1 only, so hook the anim draw, render the
+  frame to a scratch surface, stretch-blit (nearest-neighbour, same
+  palette/ConvertClass + translucency). Hazards: the anim's dirty-rect must
+  grow or large frames clip/trail; shadow frames need the same treatment; CPU
+  cost with many anims. **Render-only → no sync risk.** No known framework
+  does SHP scaling.
+
+### 9.6 Known gaps in step 1 (to close)
+- Multiplier is read at **detonation** from `Bullet->Owner->Owner`. A firer
+  that dies before impact → unscaled. Fix in step 2: capture onto a BulletExt
+  at fire time (the same link §6.1.1 needs).
+- Phobos registers no save/load hooks for WarheadTypeExt and neither do we
+  (INI-only data). Verify the tags survive save → load in-game.
+- Chain order at `0x469AA4` vs Phobos's Extras handler is load-order
+  dependent: if ours runs first, Phobos's warhead effects see the unscaled
+  radius. Vanilla damage is always scaled. RE item: a restore seat after
+  Extras (Detonate epilogue) would make Phobos effects scale deterministically.
+- Addresses not yet checked against the Hook Encyclopedia in this session —
+  the CI overlap/bounds check does that on the first PR build.
+
+---
+
+## 10. Phase roadmap
 
 | Phase | Deliverable |
 |---|---|
@@ -773,13 +885,17 @@ bunker teardown needs `ClearBunker` called explicitly after we empty the link.
 | L1 | Passengers + Occupants damage with `Eject=no` (in-place), snapshot/liveness discipline |
 | L2 | Ejection path: deterministic cell search, `Eject=damage/always`, fallbacks, double-kill guard |
 | L3 | Bunker link, open-topped filter, house/type filters, `Contained.` shorthand |
+| W1 | **Started.** Country `WarheadSize.Multiplier`, `WarheadSize.Exempt/Min/Max/FromZero`, Detonate scale-and-restore (§9.2–9.3) |
+| W2 | `WarheadSize.Attach` timed effect; fire-time capture on BulletExt; AnimList threshold swap |
+| W3 | Overflow damage pass beyond the engine spread cap |
+| W4 | RE anim draw seat; true SHP/voxel draw scaling |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
 R1 can run early too — it needs only our own containers plus the shared
 warhead-detonate and logic-frame seats. L-phases share that same detonate seat
 but need L0's RE before any removal code is written.
 
-## 10. Standing-rule compliance
+## 11. Standing-rule compliance
 - Encyclopedia consulted (RegisterDestruction cluster, CaptureManager cluster,
   locomotor hooks); M0 findings go back in.
 - Hook-overlap CI check wired in P0.

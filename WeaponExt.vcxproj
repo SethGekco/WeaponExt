@@ -39,6 +39,9 @@
     <ClCompile Include="src\Ext\WeaponType\Body.cpp" />
     <ClCompile Include="src\Ext\BulletType\Body.cpp" />
     <ClCompile Include="src\Ext\TechnoType\Body.cpp" />
+    <!-- Section 9: warhead size multiplier -->
+    <ClCompile Include="src\Ext\WarheadType\Body.cpp" />
+    <ClCompile Include="src\Hooks.WarheadSize.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -52,6 +55,7 @@
     <ClInclude Include="src\Ext\WeaponType\Body.h" />
     <ClInclude Include="src\Ext\BulletType\Body.h" />
     <ClInclude Include="src\Ext\TechnoType\Body.h" />
+    <ClInclude Include="src\Ext\WarheadType\Body.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">
