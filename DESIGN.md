@@ -1,10 +1,10 @@
 # WeaponExt — Design Document
 
 Standalone Syringe DLL for Yuri's Revenge, co-loaded with Antares (+ optionally
-Phobos). Eight pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
+Phobos). Nine pillars: **Bounty**, **Magnetron**, **Mind Control**, **Unusual
 unit/building properties** (power & range logic), **Radiation**,
 **Scatter & fire control** (absorbed from ScatterExt), **Spawned missiles**,
-**Limboed cargo** (garrison / passengers / bunker).
+**Limboed cargo** (garrison / passengers / bunker), **Warhead size scaling**.
 
 Status: P0 verified in-game 2026-09-14 (bounty probe). ScatterExt merged
 2026-09-15 — its DESIGN.md (22 sections) and HANDOFF-TO-WEAPONEXT.md in the
@@ -742,7 +742,313 @@ bunker teardown needs `ClearBunker` called explicitly after we empty the link.
 
 ---
 
-## 9. Phase roadmap
+## 9. Pillar: Warhead size scaling
+
+Multipliers that grow (or shrink) a warhead's `CellSpread`, sourced from the
+firing house's **country** and from **timed effects**, with per-warhead
+exemptions and clamps — plus the matching question of drawing explosions
+bigger.
+
+### 9.0 The core problem
+`CellSpread` lives on the shared `WarheadTypeClass`; every house detonates
+the same object. There is no per-house field to set. Options considered:
+1. **Patch the register inside `MapClass::DamageArea`** where the spread is
+   loaded. Cleanest for vanilla damage, but Phobos reads `CellSpread` itself
+   for its warhead effects (AE, shields, …) and would see the unscaled radius.
+2. **Scale-and-restore around `BulletClass::Detonate`** — write the scaled
+   value on entry, put it back on exit. Everything inside the detonation sees
+   it, co-loaded extensions included. **Chosen.**
+
+Sync: the scaled value is a pure function of INI data + the firing house, so
+every client computes the same number. No RNG is consumed.
+
+### 9.1 Tags
+```ini
+[Americans]                      ; country section (read by WeaponExt directly —
+WarheadSize.Multiplier=1.25      ;   no linkage to CountryExt.dll needed)
+
+[CombatDamage]                   ; universal limits — all unset by default (no limit)
+; Which warheads get scaled at all (compared against the warhead's OWN CellSpread):
+WarheadSize.IgnoreSpreadBelow=1.0  ; CellSpread under 1.0 → never scaled
+WarheadSize.IgnoreSpreadAbove=     ; CellSpread over this → never scaled
+; How far a warhead can be scaled:
+WarheadSize.MultiplierCap=2.0    ; the combined multiplier never goes above ×2.0
+WarheadSize.MultiplierFloor=0.5  ; …or below ×0.5 (only matters for shrinking)
+WarheadSize.SpreadCap=8          ; enlarging stops at 8 cells; a warhead that is
+                                 ;   already bigger than 8 is left as it is
+WarheadSize.SpreadFloor=0.5      ; shrinking stops at 0.5 cells; one already
+                                 ;   smaller is left as it is
+
+[SOMEWARHEAD]
+WarheadSize.Exempt=no            ; yes = never scaled (nukes, SW, rad sites…)
+; Any of the six [CombatDamage] keys above can be set here too, and wins over
+; the universal value for this warhead only.
+WarheadSize.FromZero=0           ; CellSpread=0 × anything is 0. When > 0, a
+                                 ;   CellSpread=0 warhead is treated as this
+                                 ;   spread before filtering and scaling.
+                                 ;   (Phobos warhead effects need CellSpread≠0 —
+                                 ;   this is what lets scaling switch them on.)
+
+; step 2 — timed effect, same pattern as BountyBonus / InaccuracyModifier.Attach
+[BUFFWARHEAD]
+WarheadSize.Attach=1.5           ; multiplier given to every techno in this
+                                 ;   warhead's CellSpread (its SCALED spread if
+                                 ;   the detonation itself was scaled); with
+                                 ;   CellSpread=0, only the unit that was hit
+WarheadSize.Attach.Duration=300  ; frames; must be > 0 or nothing attaches
+WarheadSize.Attach.Houses=owner,allies ; relative to the firing house:
+                                 ;   owner|allies|team|enemies|all|none (default all)
+; Re-applying replaces the value and restarts the timer — it does not stack.
+; An affected unit's shots are then scaled by country × attached.
+
+; step 2 — bigger explosion art
+[SOMEWARHEAD]
+AnimList=EXPLOSML,EXPLOMED,EXPLOLRG
+WarheadSize.AnimList.Scaled=EXPLOMED,EXPLOLRG,EXPLOHUGE
+                                 ; parallel to AnimList: whichever entry the
+                                 ;   engine picks (by damage) is swapped for the
+                                 ;   one at the same position here (last entry
+                                 ;   if this list is shorter)
+WarheadSize.AnimList.Threshold=1.5 ; swap when this detonation was scaled by
+                                 ;   ≥ this; unset = any enlargement (> 1.0)
+```
+Evaluation order, per detonation:
+1. Combine all sources (they multiply — standing invariant), then apply
+   `MultiplierCap` / `MultiplierFloor`. Negative → 0. Exactly 1.0 → stop.
+2. Base = the warhead's CellSpread, or `FromZero` if CellSpread is 0 (no
+   `FromZero` → stop).
+3. Base outside `IgnoreSpreadBelow`…`IgnoreSpreadAbove` → stop.
+4. `scaled = base × multiplier`, then `SpreadCap` (when enlarging) or
+   `SpreadFloor` (when shrinking). Limits only stop a change partway; they
+   never reverse it.
+
+#### Per-warhead overrides — worked example
+All six `[CombatDamage]` keys can also go on a warhead. A key set on a
+warhead replaces the universal value **for that warhead only**; keys it does
+not set still come from `[CombatDamage]`. Using the `[CombatDamage]` values
+above (`IgnoreSpreadBelow=1.0`, `SpreadCap=8`, `SpreadFloor=0.5`):
+```ini
+[FlakWH]                         ; CellSpread=0.5
+WarheadSize.IgnoreSpreadBelow=0  ; opt back IN: the universal filter skips
+                                 ;   anything under 1.0, so without this line
+                                 ;   FlakWH would never be enlarged. 0 = no
+                                 ;   lower filter for this warhead.
+                                 ;   SpreadCap/Floor still come from
+                                 ;   [CombatDamage] (8 / 0.5).
+
+[ShellWH]                        ; CellSpread=2
+WarheadSize.SpreadCap=3          ; tighter limit: this warhead stops growing at
+                                 ;   3 cells, even though others may reach 8
+WarheadSize.SpreadFloor=1.5      ; and stops shrinking at 1.5 cells
+                                 ;   (universal floor is 0.5)
+
+[BigBombWH]                      ; CellSpread=6
+WarheadSize.MultiplierCap=1.2    ; this one only ever gets ×1.2 at most,
+                                 ;   while others can reach the universal ×2.0
+
+[NukeWH]
+WarheadSize.Exempt=yes           ; never scaled at all, whatever the limits say
+```
+With an American ×1.25 multiplier, those come out as: FlakWH 0.5 → 0.625;
+ShellWH 2 → 2.5 (under its cap of 3); BigBombWH 6 → 7.2 (×1.2, not ×1.25);
+NukeWH unchanged.
+
+`IgnoreSpreadBelow` / `IgnoreSpreadAbove` are a **filter**: they decide
+*whether* a warhead is scaled at all, by comparing its own (unscaled)
+CellSpread. The `Cap` / `Floor` keys are **limits**: they decide *how far*
+an eligible warhead can be scaled.
+
+Per-warhead value > `[CombatDamage]` value > no limit. A map's
+`[CombatDamage]` overrides the rules one (read through Phobos's
+`0x679A15` LoadBeforeTypeData seat, once per INI).
+**Zero-cost invariant:** multiplier exactly 1.0 → no frame, no write.
+
+Attaching via Phobos AttachEffect: per §6.1.2 we don't read Phobos AE state;
+a Phobos AE can instead detonate `BUFFWARHEAD` to apply ours.
+
+### 9.2 Hook seats (step 1)
+Both co-tenanted with Phobos (`src/Ext/Bullet/Hooks.DetonateLogics.cpp`),
+both `return 0` on Phobos's normal path; sizes match Phobos's declarations:
+
+| Addr | Size | Phobos co-tenant | Use |
+|---|---|---|---|
+| `0x4690C1` | 8 | `BulletClass_Logics_DetonateOnAllMapObjects` (ESI=bullet) | apply |
+| `0x469AA4` | 5 | `BulletClass_Logics_Extras` (ESI=bullet) | restore |
+
+Detonate has an EBP frame (Phobos reads coords at `[ebp+0x8]`).
+Warhead container: Phobos's `0x75D1A9` CTOR (EBP), `0x75E5C8` SDDTOR (ESI),
+`0x75DEA0` LoadFromINI (ESI, INI at `[esp+0x150]`). Country tag: Phobos's
+`0x51214F`/`0x51215A` HouseType LoadFromINI (EBX, INI at `[ebp+0x8]`).
+
+Step 2 seats, same sourcing rule (addresses/sizes/registers from Phobos):
+
+| Addr | Size | Phobos co-tenant | Use |
+|---|---|---|---|
+| `0x6FF660` | 6 | `TechnoClass_FireAt_LateLogic` (ESI=firer, bullet `[esp+0x3C]`) | capture multiplier + house at fire time |
+| `0x4665E9` | 0xA | `BulletClass_DTOR` (ESI) | drop bullet state |
+| `0x6F4500` | 5 | `TechnoClass_DTOR` (ECX) | drop attached effect |
+| `0x469C46` | 8 | `BulletClass_Logics_DamageAnimSelected` (ESI=bullet, EBX=anim) | anim swap |
+
+`WarheadSize.Attach` is applied in the existing `0x469AA4` handler, before
+that bullet's own frame pops. `0x469C46`: Phobos's handler **always** returns
+`SkipGameCode`, so our swap only runs when WeaponExt.dll comes **before**
+Phobos in the Syringe `-i=` order (otherwise it silently never runs; the
+vanilla anim plays).
+
+### 9.3 Nesting / early-exit discipline
+- A detonation kills something whose death weapon detonates **inside** the
+  outer DamageArea → frames form a LIFO stack.
+- Same warhead nested → the inner frame scales from the **true original**
+  (oldest live frame for that warhead), never from the outer scaled value.
+- Early exits that skip the restore seat (e.g. Phobos returning
+  `ReturnFromFunction` at `0x4690C1` after our handler ran) → each frame
+  records its Detonate's EBP. On any later apply, frames with EBP ≤ current
+  EBP have provably returned (a live caller sits higher on the stack) and are
+  unwound. On restore, deeper frames (EBP < current) unwind first.
+
+### 9.4 Beyond the engine's spread limit (step 3)
+`MapClass::DamageArea` looks the spread up in the engine's cell-count table
+(`CellSpread::NumCells`, `0x7ED3D0`); a spread past the end of that table
+reads garbage. Its length isn't documented anywhere we could check, so it is
+**measured at runtime** on the first scaled detonation: entry *n* must equal
+the number of cell offsets within distance *n* under the engine's own metric
+(`CellSpread::GetDistance`: longer axis + half the shorter). The last
+matching *n* is the limit. The raw entries 0–16 and the result are written
+to debug.log.
+
+```ini
+[CombatDamage]
+WarheadSize.Overflow=yes            ; default yes; per-warhead override too
+WarheadSize.EngineSpreadLimit=      ; skip the measurement and trust this value
+```
+
+Per scaled detonation:
+- **Ceiling** = the measured limit, but never below the warhead's own
+  CellSpread (a value a modder already uses is left exactly as vanilla runs
+  it). If no limit could be measured, the ceiling *is* the warhead's own
+  CellSpread: enlargement then happens entirely through the overflow pass.
+- `CellSpread` written for the engine = `min(scaled, ceiling)`.
+- **Overflow ring** (`WarheadSize.Overflow=yes`, scaled > ceiling): our own
+  pass damages every techno farther than the ceiling and no farther than the
+  scaled spread. It calls `ReceiveDamage` with the bullet's damage, the
+  warhead, the firer and the firing house, and passes the ceiling as the
+  distance while `CellSpread` still holds the ceiling. Ring victims therefore
+  take the warhead's **edge damage** (`PercentAtMax`), with the usual
+  Verses/armor/ownership rules.
+- `WarheadSize.Overflow=no`: the spread simply stops at the ceiling.
+- Victims are snapshotted before any damage and re-checked `IsAlive` before
+  each hit (the Phobos pattern). Iteration is in `TechnoClass::Array` order,
+  so it's deterministic on every client.
+- `WarheadSize.Attach` covers the full scaled area, ring included.
+
+Not covered by the ring pass: terrain, overlays/walls, tiberium, bridges
+(technos only).
+
+### 9.5 Bigger explosion drawing (steps 2 and 4)
+- **Step 2 — art swap (done):** `WarheadSize.AnimList.Scaled=` (parallel to
+  `AnimList`) + `WarheadSize.AnimList.Threshold=`. At `0x469C46` the engine
+  has already picked the anim into EBX; we replace it with the same-position
+  entry of the scaled list. Load-order requirement and uncovered cases
+  (Phobos `AnimList.CreateAll`, SplashList) are in §9.2 / §9.6.
+- **Step 4 — true scaling:** voxel anims scale via their draw matrix (easy).
+  SHP anims: the shape blitter is 1:1 only, so hook the anim draw, render the
+  frame to a scratch surface, stretch-blit (nearest-neighbour, same
+  palette/ConvertClass + translucency). Hazards: the anim's dirty-rect must
+  grow or large frames clip/trail; shadow frames need the same treatment; CPU
+  cost with many anims. **Render-only → no sync risk.** No known framework
+  does SHP scaling.
+
+#### Step 4a (done): tagging + draw probe
+```ini
+[SOMEWARHEAD]
+WarheadSize.AnimScale=yes        ; tag this warhead's explosion anims with a
+                                 ;   draw scale = the detonation's effective
+                                 ;   multiplier (also shrinks when < 1)
+WarheadSize.AnimScale.Max=2.0    ; cap on that draw scale
+```
+- **Handoff:** at `0x469C46` (after any step 2 swap) the scale goes into a
+  one-shot *pending* slot. The next `AnimClass` constructed consumes it,
+  but only if its `Type` matches and it's built in the same frame; the next
+  detonation clears it either way. Same WeaponExt-before-Phobos load-order
+  requirement as the swap.
+- **Seats (Phobos source, all `return 0`):** `0x4226F6` `AnimClass_CTOR`
+  (ESI, `Type` already set), `0x422967` `AnimClass_DTOR` (ESI).
+- **Probe:** `0x423122` + `0x422CD8` (Phobos `AnimClass_DrawIt_DrawOffset`,
+  ESI = anim, screen location at `[esp+0x114]`) logs the first 60 draws of
+  tagged anims as `[WeaponExt][animscale] path=… anim=… scale=… frame=…
+  screen=(x,y)`. **Nothing is drawn differently yet.**
+
+#### Step 4b (RE first): the stretched draw
+Map from the registry + Phobos source (`src/Ext/Anim/Hooks.cpp`) of
+`AnimClass::DrawIt`:
+
+| Addr | Phobos seat | Returns | Notes |
+|---|---|---|---|
+| `0x422CD8` / `0x423122` | DrawOffset | always 0 | two draw paths; location `[esp+0x114]` |
+| `0x423061` | Visibility | 0 or `0x4238A3` | `0x4238A3` = end of DrawIt |
+| `0x423183` | Translucency | `0x4230FE` / `0x4238A3` | EBX = BlitterFlags; starves co-hooks |
+| `0x4232CE` | (Ares/Antares SetPalette) | — | palette chosen here |
+| `0x4232E2` | AltPalette | always `0x4232EA` | starves co-hooks |
+| `0x423365` | ExtraShadow | always non-zero | starves co-hooks |
+| `0x423654`…`0x4236F0` | Tiled_* | — | tiled-anim path |
+| `0x423855` | ShadowLocation | always `0x42385D` | shadow pass |
+
+RE checklist (needs disassembly of `gamemd.exe`):
+- [ ] Find the main shape-draw `CALL` between `0x4232EA` and `0x423365`
+      (after the palette is final, before the extra shadow). Record its
+      address, argument layout (surface, SHP, frame, point, bounds, flags,
+      Z, ConvertClass) and the stolen bytes of the instruction to hook.
+- [ ] Same for the shadow draw after `0x42385D`.
+- [ ] Confirm whether the dirty-rect / redraw bounds come from
+      `AnimClass::GetDimensions`-style virtuals (must grow with the scale,
+      or big frames clip and leave trails).
+- [ ] Add the findings to the Hook Encyclopedia (no DamageArea/Anim-draw
+      page exists yet).
+
+Implementation once mapped: at the draw call, for tagged anims, skip the 1:1
+call and instead (1) draw the frame to a scratch surface with the same
+ConvertClass/flags, (2) nearest-neighbour stretch it onto the target surface
+around the same anchor, with clipping. Voxel anims (`VoxelAnimClass`) are a
+separate class and draw path, handled after SHP.
+
+### 9.6 Known gaps (to close)
+- ~~Firer dying before impact → unscaled.~~ Closed in step 2: multiplier and
+  firing house are captured at fire time (`0x6FF660`). Bullets that did not
+  pass through that seat (e.g. spawned by other extensions) fall back to the
+  live firer lookup.
+- Step 2 state (captured bullets, attached effects) lives in our own maps and
+  is **not saved**: after save → load, attached effects are gone and in-flight
+  shots fall back to the live firer. Needs a save/load seat to fix.
+- Anim swap needs WeaponExt before Phobos in the `-i=` list (see §9.2), and
+  does not apply to Phobos `AnimList.CreateAll` (reads `AnimList` directly) or
+  to SplashList anims.
+- `Unsorted::CurrentFrame` (attach timers) is used from YRpp as-is; the first
+  CI build confirms it resolves.
+- Phobos registers no save/load hooks for WarheadTypeExt and neither do we
+  (INI-only data). Verify the tags survive save → load in-game.
+- ~~Phobos warhead effects may miss the scaling.~~ Checked in Phobos source:
+  its bullet-path warhead effects run at `0x46920B` (`BulletClass_Detonate`,
+  which clears `InDamageArea`), inside our `0x4690C1`…`0x469AA4` bracket,
+  and the vanilla `DamageArea` call falls in the same window (Phobos only
+  re-arms `InDamageArea` at `0x469AA4`). Both see the scaled spread. Only
+  Phobos's *Extras* at `0x469AA4` itself (ExtraWarheads, ReturnWeapon) are
+  order-dependent against our restore.
+- Step 3 ring damage assumes `ReceiveDamage`'s own falloff uses the
+  `DistanceFromEpicenter` argument together with the warhead's current
+  `CellSpread` (so passing the ceiling gives edge damage). **Verify in-game**:
+  if ring victims take full damage instead, the falloff lives in DamageArea
+  and the ring pass must scale the damage itself.
+- Engine-limit measurement assumes `NumCells(n)` is the cumulative count of
+  cells within distance *n*. If that's wrong, the measurement stops early
+  (safe: more of the area goes through the ring pass) or fails outright
+  (safe: logged, ceiling = the warhead's own value). The debug.log line shows
+  the raw table either way.
+- Addresses not yet checked against the Hook Encyclopedia in this session —
+  the CI overlap/bounds check does that on the first PR build.
+
+---
+
+## 10. Phase roadmap
 
 | Phase | Deliverable |
 |---|---|
@@ -773,13 +1079,17 @@ bunker teardown needs `ClearBunker` called explicitly after we empty the link.
 | L1 | Passengers + Occupants damage with `Eject=no` (in-place), snapshot/liveness discipline |
 | L2 | Ejection path: deterministic cell search, `Eject=damage/always`, fallbacks, double-kill guard |
 | L3 | Bunker link, open-topped filter, house/type filters, `Contained.` shorthand |
+| W1 | **Started.** Country `WarheadSize.Multiplier`; `[CombatDamage]` + per-warhead `IgnoreSpreadBelow/Above`, `MultiplierCap/Floor`, `SpreadCap/Floor`; `Exempt`, `FromZero`; Detonate scale-and-restore (§9.2–9.3) |
+| W2 | **Started.** `WarheadSize.Attach` timed effect; fire-time capture (multiplier + house); `WarheadSize.AnimList.Scaled/Threshold` swap (§9.2, §9.6) |
+| W3 | **Started.** Runtime-measured engine spread limit + clamp; `WarheadSize.Overflow` ring damage pass; `WarheadSize.EngineSpreadLimit` override (§9.4, §9.6) |
+| W4 | **Started.** 4a: `WarheadSize.AnimScale(.Max)` tagging via anim CTOR/DTOR + read-only DrawIt probe. 4b: RE the shape-draw call (§9.5 checklist), then stretched SHP draw; voxels after |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
 R1 can run early too — it needs only our own containers plus the shared
 warhead-detonate and logic-frame seats. L-phases share that same detonate seat
 but need L0's RE before any removal code is written.
 
-## 10. Standing-rule compliance
+## 11. Standing-rule compliance
 - Encyclopedia consulted (RegisterDestruction cluster, CaptureManager cluster,
   locomotor hooks); M0 findings go back in.
 - Hook-overlap CI check wired in P0.
