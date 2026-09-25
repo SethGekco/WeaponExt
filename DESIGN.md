@@ -791,9 +791,26 @@ WarheadSize.FromZero=0           ; CellSpread=0 × anything is 0. When > 0, a
 
 ; step 2 — timed effect, same pattern as BountyBonus / InaccuracyModifier.Attach
 [BUFFWARHEAD]
-WarheadSize.Attach=1.5
-WarheadSize.Attach.Duration=300
-WarheadSize.Attach.Houses=owner,allies
+WarheadSize.Attach=1.5           ; multiplier given to every techno in this
+                                 ;   warhead's CellSpread (its SCALED spread if
+                                 ;   the detonation itself was scaled); with
+                                 ;   CellSpread=0, only the unit that was hit
+WarheadSize.Attach.Duration=300  ; frames; must be > 0 or nothing attaches
+WarheadSize.Attach.Houses=owner,allies ; relative to the firing house:
+                                 ;   owner|allies|team|enemies|all|none (default all)
+; Re-applying replaces the value and restarts the timer — it does not stack.
+; An affected unit's shots are then scaled by country × attached.
+
+; step 2 — bigger explosion art
+[SOMEWARHEAD]
+AnimList=EXPLOSML,EXPLOMED,EXPLOLRG
+WarheadSize.AnimList.Scaled=EXPLOMED,EXPLOLRG,EXPLOHUGE
+                                 ; parallel to AnimList: whichever entry the
+                                 ;   engine picks (by damage) is swapped for the
+                                 ;   one at the same position here (last entry
+                                 ;   if this list is shorter)
+WarheadSize.AnimList.Threshold=1.5 ; swap when this detonation was scaled by
+                                 ;   ≥ this; unset = any enlargement (> 1.0)
 ```
 Evaluation order, per detonation:
 1. Combine all sources (they multiply — standing invariant), then apply
@@ -863,6 +880,21 @@ Warhead container: Phobos's `0x75D1A9` CTOR (EBP), `0x75E5C8` SDDTOR (ESI),
 `0x75DEA0` LoadFromINI (ESI, INI at `[esp+0x150]`). Country tag: Phobos's
 `0x51214F`/`0x51215A` HouseType LoadFromINI (EBX, INI at `[ebp+0x8]`).
 
+Step 2 seats, same sourcing rule (addresses/sizes/registers from Phobos):
+
+| Addr | Size | Phobos co-tenant | Use |
+|---|---|---|---|
+| `0x6FF660` | 6 | `TechnoClass_FireAt_LateLogic` (ESI=firer, bullet `[esp+0x3C]`) | capture multiplier + house at fire time |
+| `0x4665E9` | 0xA | `BulletClass_DTOR` (ESI) | drop bullet state |
+| `0x6F4500` | 5 | `TechnoClass_DTOR` (ECX) | drop attached effect |
+| `0x469C46` | 8 | `BulletClass_Logics_DamageAnimSelected` (ESI=bullet, EBX=anim) | anim swap |
+
+`WarheadSize.Attach` is applied in the existing `0x469AA4` handler, before
+that bullet's own frame pops. `0x469C46`: Phobos's handler **always** returns
+`SkipGameCode`, so our swap only runs when WeaponExt.dll comes **before**
+Phobos in the Syringe `-i=` order (otherwise it silently never runs; the
+vanilla anim plays).
+
 ### 9.3 Nesting / early-exit discipline
 - A detonation kills something whose death weapon detonates **inside** the
   outer DamageArea → frames form a LIFO stack.
@@ -883,12 +915,11 @@ scaled radius, with vanilla `PercentAtMax` falloff extended over the full
 radius.
 
 ### 9.5 Bigger explosion drawing (steps 2 and 4)
-- **Step 2 — art swap (zero RE):** `WarheadSize.AnimList.Scaled=` +
-  `WarheadSize.AnimList.Thresholds=` pick larger pre-drawn anims when the
-  effective multiplier crosses a threshold. Co-seat: Phobos
-  `0x469C46` `BulletClass_Logics_DamageAnimSelected` (EBX = anim type) —
-  that handler returns `SkipGameCode`, so we cannot co-hook it blindly; RE
-  item: pick a seat after it or override via its own tags.
+- **Step 2 — art swap (done):** `WarheadSize.AnimList.Scaled=` (parallel to
+  `AnimList`) + `WarheadSize.AnimList.Threshold=`. At `0x469C46` the engine
+  has already picked the anim into EBX; we replace it with the same-position
+  entry of the scaled list. Load-order requirement and uncovered cases
+  (Phobos `AnimList.CreateAll`, SplashList) are in §9.2 / §9.6.
 - **Step 4 — true scaling:** voxel anims scale via their draw matrix (easy).
   SHP anims: the shape blitter is 1:1 only, so hook the anim draw, render the
   frame to a scratch surface, stretch-blit (nearest-neighbour, same
@@ -897,10 +928,19 @@ radius.
   cost with many anims. **Render-only → no sync risk.** No known framework
   does SHP scaling.
 
-### 9.6 Known gaps in step 1 (to close)
-- Multiplier is read at **detonation** from `Bullet->Owner->Owner`. A firer
-  that dies before impact → unscaled. Fix in step 2: capture onto a BulletExt
-  at fire time (the same link §6.1.1 needs).
+### 9.6 Known gaps (to close)
+- ~~Firer dying before impact → unscaled.~~ Closed in step 2: multiplier and
+  firing house are captured at fire time (`0x6FF660`). Bullets that did not
+  pass through that seat (e.g. spawned by other extensions) fall back to the
+  live firer lookup.
+- Step 2 state (captured bullets, attached effects) lives in our own maps and
+  is **not saved**: after save → load, attached effects are gone and in-flight
+  shots fall back to the live firer. Needs a save/load seat to fix.
+- Anim swap needs WeaponExt before Phobos in the `-i=` list (see §9.2), and
+  does not apply to Phobos `AnimList.CreateAll` (reads `AnimList` directly) or
+  to SplashList anims.
+- `Unsorted::CurrentFrame` (attach timers) is used from YRpp as-is; the first
+  CI build confirms it resolves.
 - Phobos registers no save/load hooks for WarheadTypeExt and neither do we
   (INI-only data). Verify the tags survive save → load in-game.
 - Chain order at `0x469AA4` vs Phobos's Extras handler is load-order
@@ -944,7 +984,7 @@ radius.
 | L2 | Ejection path: deterministic cell search, `Eject=damage/always`, fallbacks, double-kill guard |
 | L3 | Bunker link, open-topped filter, house/type filters, `Contained.` shorthand |
 | W1 | **Started.** Country `WarheadSize.Multiplier`; `[CombatDamage]` + per-warhead `IgnoreSpreadBelow/Above`, `MultiplierCap/Floor`, `SpreadCap/Floor`; `Exempt`, `FromZero`; Detonate scale-and-restore (§9.2–9.3) |
-| W2 | `WarheadSize.Attach` timed effect; fire-time capture on BulletExt; AnimList threshold swap |
+| W2 | **Started.** `WarheadSize.Attach` timed effect; fire-time capture (multiplier + house); `WarheadSize.AnimList.Scaled/Threshold` swap (§9.2, §9.6) |
 | W3 | Overflow damage pass beyond the engine spread cap |
 | W4 | RE anim draw seat; true SHP/voxel draw scaling |
 

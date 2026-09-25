@@ -3,6 +3,46 @@
 #include <Utilities/Macro.h>
 #include <Utilities/Debug.h>
 
+#include <WeaponExt.h>
+
+#include <cstring> // strtok, _strcmpi
+
+namespace
+{
+	// "owner,allies" -> bitmask. Unknown tokens are logged and ignored; an
+	// empty or all-unknown list keeps the previous value.
+	void ReadHouses(CCINIClass* pINI, const char* section, const char* key, Valueable<int>& out)
+	{
+		if (!pINI->ReadString(section, key, "", WeaponExtDLL::readBuffer, WeaponExtDLL::readLength))
+			return;
+
+		int mask = 0;
+		bool any = false;
+		for (char* tok = strtok(WeaponExtDLL::readBuffer, ", \t"); tok; tok = strtok(nullptr, ", \t"))
+		{
+			any = true;
+			if (_strcmpi(tok, "owner") == 0)
+				mask |= WarheadSizeHouse_Owner;
+			else if (_strcmpi(tok, "allies") == 0)
+				mask |= WarheadSizeHouse_Allies;
+			else if (_strcmpi(tok, "team") == 0)
+				mask |= WarheadSizeHouse_Owner | WarheadSizeHouse_Allies;
+			else if (_strcmpi(tok, "enemies") == 0)
+				mask |= WarheadSizeHouse_Enemies;
+			else if (_strcmpi(tok, "all") == 0)
+				mask |= WarheadSizeHouse_All;
+			else if (_strcmpi(tok, "none") == 0)
+				mask |= 0;
+			else
+				Debug::Log("[WeaponExt] %s: unrecognised %s token '%s' "
+					"(expected owner|allies|team|enemies|all|none); ignored.\n", section, key, tok);
+		}
+
+		if (any)
+			out = mask;
+	}
+}
+
 WarheadTypeExt::ExtContainer WarheadTypeExt::ExtMap;
 
 WarheadTypeExt::ExtContainer::ExtContainer() : Container<WarheadTypeExt>("WarheadTypeClass") { }
@@ -26,6 +66,32 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	this->WarheadSize_SpreadCap.Read(exINI, section, "WarheadSize.SpreadCap");
 	this->WarheadSize_SpreadFloor.Read(exINI, section, "WarheadSize.SpreadFloor");
 	this->WarheadSize_FromZero.Read(exINI, section, "WarheadSize.FromZero");
+
+	this->WarheadSize_Attach.Read(exINI, section, "WarheadSize.Attach");
+	this->WarheadSize_Attach_Duration.Read(exINI, section, "WarheadSize.Attach.Duration");
+	ReadHouses(pINI, section, "WarheadSize.Attach.Houses", this->WarheadSize_Attach_Houses);
+	this->WarheadSize_AnimList_Scaled.Read(exINI, section, "WarheadSize.AnimList.Scaled");
+	this->WarheadSize_AnimList_Threshold.Read(exINI, section, "WarheadSize.AnimList.Threshold");
+
+	if (this->WarheadSize_Attach.isset() && this->WarheadSize_Attach_Duration <= 0)
+	{
+		Debug::Log("[WeaponExt] %s: WarheadSize.Attach is set but WarheadSize.Attach.Duration "
+			"is not > 0; nothing will be attached.\n", section);
+	}
+
+	if (this->HasAttach())
+	{
+		Debug::Log("[WeaponExt] %s: WarheadSize.Attach=%.2f for %d frames, houses=0x%X\n",
+			section, this->WarheadSize_Attach.Get(), this->WarheadSize_Attach_Duration.Get(),
+			this->WarheadSize_Attach_Houses.Get());
+	}
+
+	if (!this->WarheadSize_AnimList_Scaled.empty())
+	{
+		Debug::Log("[WeaponExt] %s: WarheadSize.AnimList.Scaled has %d anim(s), threshold=%.2f "
+			"(-1 = any enlargement)\n", section, (int)this->WarheadSize_AnimList_Scaled.size(),
+			this->WarheadSize_AnimList_Threshold.Get(-1.0));
+	}
 
 	if (this->HasAnyWarheadSize())
 	{
@@ -52,6 +118,11 @@ void WarheadTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->WarheadSize_SpreadCap)
 		.Process(this->WarheadSize_SpreadFloor)
 		.Process(this->WarheadSize_FromZero)
+		.Process(this->WarheadSize_Attach)
+		.Process(this->WarheadSize_Attach_Duration)
+		.Process(this->WarheadSize_Attach_Houses)
+		.Process(this->WarheadSize_AnimList_Scaled)
+		.Process(this->WarheadSize_AnimList_Threshold)
 		;
 }
 

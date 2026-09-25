@@ -1,4 +1,7 @@
-// Section 9: warhead size multiplier (country source; step 1).
+// Section 9: warhead size multiplier.
+//   Step 1: country source, [CombatDamage]/per-warhead limits.
+//   Step 2: WarheadSize.Attach timed source, fire-time capture, anim swap
+//           (seats listed above each hook at the bottom of this file).
 //
 // CellSpread is a field on the shared WarheadTypeClass, so there is nothing
 // per-house to scale. Instead: scale it on the way into BulletClass::Detonate
@@ -34,6 +37,8 @@
 #include <HouseClass.h>
 #include <HouseTypeClass.h>
 #include <CCINIClass.h>
+#include <AnimTypeClass.h>
+#include <Unsorted.h>
 
 #include <Utilities/Macro.h>
 #include <Utilities/Debug.h>
@@ -54,18 +59,82 @@ namespace
 	// HouseType is destroyed is harmless.
 	std::unordered_map<const HouseTypeClass*, double> CountryMultiplier;
 
-	double MultiplierFor(const BulletClass* pBullet)
+	double CountryFor(const HouseClass* pHouse)
 	{
-		auto const pFirer = pBullet->Owner;
-		if (!pFirer)
-			return 1.0;   // step 1: firer dead before impact -> unscaled (9.6)
-
-		auto const pHouse = pFirer->Owner;
 		if (!pHouse || !pHouse->Type)
 			return 1.0;
 
 		auto const it = CountryMultiplier.find(pHouse->Type);
 		return it == CountryMultiplier.end() ? 1.0 : it->second;
+	}
+
+	// ---- Timed effect source (WarheadSize.Attach) --------------------------
+	// Entries are erased in the TechnoClass DTOR hook, so a freed pointer can
+	// never be reused by a new object while still carrying an old effect.
+	// Expiry is checked lazily on read; no per-frame work.
+	struct AttachState
+	{
+		double Multiplier;
+		int UntilFrame;
+	};
+	std::unordered_map<const TechnoClass*, AttachState> Attached;
+
+	double AttachedFor(const TechnoClass* pTechno)
+	{
+		if (!pTechno)
+			return 1.0;
+
+		auto const it = Attached.find(pTechno);
+		if (it == Attached.end())
+			return 1.0;
+
+		if (Unsorted::CurrentFrame >= it->second.UntilFrame)
+		{
+			Attached.erase(it);
+			return 1.0;
+		}
+		return it->second.Multiplier;
+	}
+
+	// Everything this firer's shots are scaled by right now. Sources multiply.
+	double LiveMultiplier(const TechnoClass* pFirer)
+	{
+		if (!pFirer)
+			return 1.0;
+		return CountryFor(pFirer->Owner) * AttachedFor(pFirer);
+	}
+
+	// ---- Per-bullet state -------------------------------------------------
+	// Captured at fire time (0x6FF660) so a shot keeps its multiplier and its
+	// house even if the firer dies before impact; also remembers the effective
+	// multiplier a detonation was scaled with, for the anim swap at 0x469C46.
+	// Erased in the BulletClass DTOR hook.
+	struct BulletState
+	{
+		bool Captured = false;
+		double FireMultiplier = 1.0;
+		HouseClass* FirerHouse = nullptr;
+		double AppliedMultiplier = 1.0;   // 1.0 = this detonation was not scaled
+	};
+	std::unordered_map<const BulletClass*, BulletState> Bullets;
+
+	double MultiplierFor(const BulletClass* pBullet)
+	{
+		auto const it = Bullets.find(pBullet);
+		if (it != Bullets.end() && it->second.Captured)
+			return it->second.FireMultiplier;
+		return LiveMultiplier(pBullet->Owner);
+	}
+
+	// The house that fired, as of fire time when we captured it (a firer that
+	// changes owner mid-flight does not change whose shot it was).
+	HouseClass* FirerHouseFor(const BulletClass* pBullet)
+	{
+		auto const it = Bullets.find(pBullet);
+		if (it != Bullets.end() && it->second.FirerHouse)
+			return it->second.FirerHouse;
+
+		return pBullet->Owner ? pBullet->Owner->Owner : nullptr;
 	}
 
 	// ---- Universal limits ([CombatDamage]) --------------------------------
@@ -99,8 +168,10 @@ namespace
 	// The CellSpread this warhead should detonate with, or a negative value
 	// for "leave it alone". Pure function of INI data + the multiplier, so
 	// every client computes the same value -- required, because CellSpread
-	// decides who is damaged.
-	double ScaledSpread(const WarheadTypeExt::ExtData* pExt, double original, double multiplier)
+	// decides who is damaged. *pEffective receives the multiplier after the
+	// Cap/Floor clamp (what the anim swap threshold compares against).
+	double ScaledSpread(const WarheadTypeExt::ExtData* pExt, double original, double multiplier,
+		double* pEffective)
 	{
 		auto L = [pExt](Nullable<double> WarheadTypeExt::ExtData::* m) -> const Nullable<double>*
 			{ return pExt ? &(pExt->*m) : nullptr; };
@@ -117,6 +188,7 @@ namespace
 			multiplier = 0.0;
 		if (multiplier == 1.0)
 			return -1.0;
+		*pEffective = multiplier;
 
 		// 2. The spread we scale from (FromZero stands in for CellSpread=0).
 		double base = original;
@@ -190,6 +262,94 @@ namespace
 				return Frames[i].Previous;
 		}
 		return pWH->CellSpread;
+	}
+
+	bool IsTechno(AbstractClass* pAbs)
+	{
+		if (!pAbs)
+			return false;
+
+		switch (pAbs->WhatAmI())
+		{
+		case AbstractType::Unit:
+		case AbstractType::Infantry:
+		case AbstractType::Building:
+		case AbstractType::Aircraft:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	bool HouseAllowed(int mask, HouseClass* pFirer, HouseClass* pVictim)
+	{
+		if ((mask & WarheadSizeHouse_All) == WarheadSizeHouse_All)
+			return true;
+		if (!pFirer || !pVictim)
+			return false;
+		if (pFirer == pVictim)
+			return (mask & WarheadSizeHouse_Owner) != 0;
+		if (pFirer->IsAlliedWith(pVictim))
+			return (mask & WarheadSizeHouse_Allies) != 0;
+		return (mask & WarheadSizeHouse_Enemies) != 0;
+	}
+
+	void Attach(TechnoClass* pTechno, double multiplier, int untilFrame)
+	{
+		// Re-applying replaces the value and restarts the timer (no stacking).
+		Attached[pTechno] = { multiplier, untilFrame };
+	}
+
+	// WarheadSize.Attach: give every eligible techno inside this detonation's
+	// CellSpread the timed multiplier. Runs while this bullet's own frame is
+	// still pushed, so a scaled detonation also buffs a scaled area.
+	// Iteration is over the engine's own TechnoClass::Array in its order and
+	// only writes our map -- deterministic on every client.
+	void ApplyAttach(BulletClass* pBullet, const CoordStruct& where)
+	{
+		auto const pWH = pBullet->WH;
+		auto const pExt = pWH ? WarheadTypeExt::ExtMap.Find(pWH) : nullptr;
+		if (!pExt || !pExt->HasAttach())
+			return;
+
+		const double multiplier = pExt->WarheadSize_Attach.Get() < 0.0 ? 0.0 : pExt->WarheadSize_Attach.Get();
+		const int untilFrame = Unsorted::CurrentFrame + pExt->WarheadSize_Attach_Duration;
+		const int houses = pExt->WarheadSize_Attach_Houses;
+		HouseClass* const pFirerHouse = FirerHouseFor(pBullet);
+
+		auto eligible = [&](TechnoClass* pTechno)
+			{
+				return pTechno && pTechno->IsAlive && !pTechno->InLimbo && pTechno->IsOnMap
+					&& HouseAllowed(houses, pFirerHouse, pTechno->Owner);
+			};
+
+		const double radius = (double)pWH->CellSpread * 256.0;   // leptons
+		if (radius <= 0.0)
+		{
+			// No spread: only the thing that was actually hit.
+			if (IsTechno(pBullet->Target))
+			{
+				auto const pTarget = static_cast<TechnoClass*>(pBullet->Target);
+				if (eligible(pTarget))
+					Attach(pTarget, multiplier, untilFrame);
+			}
+			return;
+		}
+
+		const double radiusSq = radius * radius;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pTechno = TechnoClass::Array.Items[i];
+			if (!eligible(pTechno))
+				continue;
+
+			const CoordStruct c = pTechno->GetCoords();
+			const double dx = (double)c.X - where.X;
+			const double dy = (double)c.Y - where.Y;
+			const double dz = (double)c.Z - where.Z;
+			if (dx * dx + dy * dy + dz * dz <= radiusSq)
+				Attach(pTechno, multiplier, untilFrame);
+		}
 	}
 }
 
@@ -287,12 +447,17 @@ DEFINE_HOOK(0x4690C1, BulletClass_Detonate_WarheadSizeApply, 0x8)
 	}
 
 	const SpreadT original = OriginalSpread(pWH);
-	const double scaled = ScaledSpread(pExt, (double)original, multiplier);
+	double effective = 1.0;
+	const double scaled = ScaledSpread(pExt, (double)original, multiplier, &effective);
 	if (scaled < 0.0)
 		return 0;
 
 	Frames[FrameCount++] = { pThis, pWH, R->EBP(), pWH->CellSpread };
 	pWH->CellSpread = (SpreadT)scaled;
+
+	// Remembered for the anim swap at 0x469C46, which runs after the restore.
+	if (pExt && !pExt->WarheadSize_AnimList_Scaled.empty())
+		Bullets[pThis].AppliedMultiplier = effective;
 
 	return 0;
 }
@@ -302,12 +467,17 @@ DEFINE_HOOK(0x4690C1, BulletClass_Detonate_WarheadSizeApply, 0x8)
 DEFINE_HOOK(0x469AA4, BulletClass_Detonate_WarheadSizeRestore, 0x5)
 {
 	GET(BulletClass*, pThis, ESI);
+	GET_BASE(CoordStruct const* const, pCoords, 0x8);   // as Phobos reads it here
 	const DWORD ebp = R->EBP();
 
-	// Anything nested deeper than this Detonate is finished; then pop this
-	// call's own frame if it pushed one.
+	// Anything nested deeper than this Detonate is finished.
 	while (FrameCount > 0 && Frames[FrameCount - 1].Ebp < ebp)
 		PopTop();
+
+	// Before popping our own frame, so a scaled warhead attaches over its
+	// scaled area.
+	if (pThis && pCoords)
+		ApplyAttach(pThis, *pCoords);
 
 	if (FrameCount > 0
 		&& Frames[FrameCount - 1].Ebp == ebp
@@ -315,6 +485,111 @@ DEFINE_HOOK(0x469AA4, BulletClass_Detonate_WarheadSizeRestore, 0x5)
 	{
 		PopTop();
 	}
+
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Step 2 seats. All co-tenanted with Phobos at the same size; each Phobos
+// handler named here returns 0 on its normal path unless noted.
+// ---------------------------------------------------------------------------
+
+// Fire-time capture. Phobos TechnoClass_FireAt_LateLogic
+// (src/Ext/Techno/Hooks.Firing.cpp): ESI = firer, the freshly created bullet
+// at STACK_OFFSET(0xB0, -0x74) = [esp+0x3C]. Returns 0.
+//
+// Every shot is recorded, including ×1.0 ones: otherwise a unit that fires
+// unbuffed and gains WarheadSize.Attach mid-flight would have that shot fall
+// back to the live lookup and land scaled. Cost is one map insert per shot
+// and one erase in the DTOR; no game state is written.
+DEFINE_HOOK(0x6FF660, TechnoClass_FireAt_WarheadSizeCapture, 0x6)
+{
+	GET(TechnoClass* const, pThis, ESI);
+	auto const pBullet = R->Stack<BulletClass*>(0x3C);
+
+	if (!pThis || !pBullet)
+		return 0;
+
+	auto& state = Bullets[pBullet];
+	state.Captured = true;
+	state.FireMultiplier = LiveMultiplier(pThis);
+	state.FirerHouse = pThis->Owner;
+
+	return 0;
+}
+
+// Phobos BulletClass_DTOR (src/Ext/Bullet/Body.cpp): ESI = bullet. Returns 0.
+DEFINE_HOOK(0x4665E9, BulletClass_DTOR_WarheadSize, 0xA)
+{
+	GET(BulletClass*, pItem, ESI);
+
+	Bullets.erase(pItem);
+
+	return 0;
+}
+
+// Phobos TechnoClass_DTOR (src/Ext/Techno/Body.cpp): ECX = techno. Returns 0.
+DEFINE_HOOK(0x6F4500, TechnoClass_DTOR_WarheadSize, 0x5)
+{
+	GET(TechnoClass*, pItem, ECX);
+
+	Attached.erase(pItem);
+
+	return 0;
+}
+
+// Bigger explosion art. Phobos BulletClass_Logics_DamageAnimSelected: the
+// engine has just picked the damage anim into EBX, ESI = bullet. We swap EBX
+// and return 0 so whoever runs next (Phobos, or vanilla) creates our anim.
+//
+// !! Phobos's handler here ALWAYS returns SkipGameCode (0x469C98). Syringe
+// stops the chain at the first non-zero return, so this only works when
+// WeaponExt.dll is listed BEFORE Phobos in the Syringe -i= order. If Phobos
+// runs first we are never called and the vanilla anim plays -- no crash,
+// just no swap. Also not covered: Phobos AnimList.CreateAll (reads AnimList
+// directly, ignoring EBX) and SplashList anims (not in AnimList).
+DEFINE_HOOK(0x469C46, BulletClass_Detonate_WarheadSizeAnim, 0x8)
+{
+	GET(BulletClass*, pThis, ESI);
+	GET(AnimTypeClass*, pAnimType, EBX);
+
+	if (!pThis || !pAnimType || !pThis->WH)
+		return 0;
+
+	auto const it = Bullets.find(pThis);
+	if (it == Bullets.end() || it->second.AppliedMultiplier == 1.0)
+		return 0;
+
+	auto const pExt = WarheadTypeExt::ExtMap.Find(pThis->WH);
+	if (!pExt || pExt->WarheadSize_AnimList_Scaled.empty())
+		return 0;
+
+	const double m = it->second.AppliedMultiplier;
+	const bool passed = pExt->WarheadSize_AnimList_Threshold.isset()
+		? m >= pExt->WarheadSize_AnimList_Threshold.Get()
+		: m > 1.0;
+	if (!passed)
+		return 0;
+
+	// Position of the engine's pick in the warhead's own AnimList.
+	auto const& list = pThis->WH->AnimList;
+	int index = -1;
+	for (int i = 0; i < list.Count; ++i)
+	{
+		if (list.Items[i] == pAnimType)
+		{
+			index = i;
+			break;
+		}
+	}
+	if (index < 0)
+		return 0;   // not from AnimList (e.g. a splash) -- leave it alone
+
+	auto const& scaled = pExt->WarheadSize_AnimList_Scaled;
+	const int last = (int)scaled.size() - 1;
+	auto const pNew = scaled[index < last ? index : last];
+	if (pNew)
+		R->EBX(reinterpret_cast<DWORD>(pNew));
 
 	return 0;
 }

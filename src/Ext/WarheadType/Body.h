@@ -4,6 +4,18 @@
 #include <Utilities/TemplateDef.h>
 
 #include <WarheadTypeClass.h>
+// Complete type needed: ValueableVector<AnimTypeClass*> parsing calls Find().
+#include <AnimTypeClass.h>
+
+// House-relation bitmask for WarheadSize.Attach.Houses, relative to the
+// firing house.
+enum WarheadSizeHouses
+{
+	WarheadSizeHouse_Owner = 0x1,
+	WarheadSizeHouse_Allies = 0x2,
+	WarheadSizeHouse_Enemies = 0x4,
+	WarheadSizeHouse_All = 0x7,
+};
 
 // Warhead-level extension: per-warhead rules for the size multiplier
 // (DESIGN.md section 9).
@@ -39,6 +51,23 @@ public:
 		// because Phobos warhead effects only apply with CellSpread!=0.
 		Valueable<double> WarheadSize_FromZero;
 
+		// ---- Step 2: timed multiplier applied by this warhead (9.1) ----
+		// Unset = this warhead attaches nothing. Every techno inside this
+		// warhead's (possibly scaled) CellSpread, filtered by Houses, gets the
+		// multiplier for Duration frames. Re-applying replaces the value and
+		// restarts the timer; it does not stack.
+		Nullable<double> WarheadSize_Attach;
+		Valueable<int> WarheadSize_Attach_Duration;
+		Valueable<int> WarheadSize_Attach_Houses;   // WarheadSizeHouses bitmask
+
+		// ---- Step 2: bigger explosion art (9.5) ----
+		// Parallel to the warhead's own AnimList: when the detonation was
+		// scaled at or above Threshold, whichever AnimList entry the engine
+		// picked is replaced by the entry at the same position here (or the
+		// last one if this list is shorter). Unset Threshold = any enlargement.
+		ValueableVector<AnimTypeClass*> WarheadSize_AnimList_Scaled;
+		Nullable<double> WarheadSize_AnimList_Threshold;
+
 		ExtData(WarheadTypeClass* OwnerObject) : Extension<WarheadTypeClass>(OwnerObject)
 			, WarheadSize_Exempt { false }
 			, WarheadSize_IgnoreSpreadBelow { }
@@ -48,6 +77,11 @@ public:
 			, WarheadSize_SpreadCap { }
 			, WarheadSize_SpreadFloor { }
 			, WarheadSize_FromZero { 0.0 }
+			, WarheadSize_Attach { }
+			, WarheadSize_Attach_Duration { 0 }
+			, WarheadSize_Attach_Houses { WarheadSizeHouse_All }
+			, WarheadSize_AnimList_Scaled { }
+			, WarheadSize_AnimList_Threshold { }
 		{ }
 
 		virtual ~ExtData() = default;
@@ -65,7 +99,13 @@ public:
 				|| WarheadSize_IgnoreSpreadBelow.isset() || WarheadSize_IgnoreSpreadAbove.isset()
 				|| WarheadSize_MultiplierCap.isset() || WarheadSize_MultiplierFloor.isset()
 				|| WarheadSize_SpreadCap.isset() || WarheadSize_SpreadFloor.isset()
-				|| WarheadSize_FromZero > 0.0;
+				|| WarheadSize_FromZero > 0.0
+				|| HasAttach() || !WarheadSize_AnimList_Scaled.empty();
+		}
+
+		bool HasAttach() const
+		{
+			return WarheadSize_Attach.isset() && WarheadSize_Attach_Duration > 0;
 		}
 
 	private:
