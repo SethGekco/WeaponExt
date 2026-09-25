@@ -66,6 +66,7 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	this->WarheadSize_SpreadCap.Read(exINI, section, "WarheadSize.SpreadCap");
 	this->WarheadSize_SpreadFloor.Read(exINI, section, "WarheadSize.SpreadFloor");
 	this->WarheadSize_FromZero.Read(exINI, section, "WarheadSize.FromZero");
+	this->WarheadSize_Overflow.Read(exINI, section, "WarheadSize.Overflow");
 
 	this->WarheadSize_Attach.Read(exINI, section, "WarheadSize.Attach");
 	this->WarheadSize_Attach_Duration.Read(exINI, section, "WarheadSize.Attach.Duration");
@@ -118,6 +119,7 @@ void WarheadTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->WarheadSize_SpreadCap)
 		.Process(this->WarheadSize_SpreadFloor)
 		.Process(this->WarheadSize_FromZero)
+		.Process(this->WarheadSize_Overflow)
 		.Process(this->WarheadSize_Attach)
 		.Process(this->WarheadSize_Attach_Duration)
 		.Process(this->WarheadSize_Attach_Houses)

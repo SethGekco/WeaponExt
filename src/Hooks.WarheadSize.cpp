@@ -39,6 +39,7 @@
 #include <CCINIClass.h>
 #include <AnimTypeClass.h>
 #include <Unsorted.h>
+#include <CellSpread.h>
 
 #include <Utilities/Macro.h>
 #include <Utilities/Debug.h>
@@ -49,6 +50,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -147,7 +149,64 @@ namespace
 		Nullable<double> MultiplierFloor;
 		Nullable<double> SpreadCap;
 		Nullable<double> SpreadFloor;
+		Nullable<bool> Overflow;           // step 3; default yes
+		Nullable<int> EngineSpreadLimit;   // step 3; overrides detection
 	} Global;
+
+	// ---- Engine spread limit (step 3) -------------------------------------
+	// MapClass::DamageArea looks CellSpread up in the engine's cell-count
+	// table (CellSpread::NumCells, 0x7ED3D0). Its length is not documented
+	// anywhere we can check, so it is MEASURED: entry n must equal the number
+	// of cell offsets within distance n under the engine's own metric
+	// (CellSpread::GetDistance: longer axis + half the shorter). The last n
+	// that matches is the limit. Reading past the table is a read of the
+	// game's own static data, never a write. -1 = could not establish one.
+	int ExpectedCells(int n)
+	{
+		int count = 0;
+		for (int dx = -n; dx <= n; ++dx)
+		{
+			for (int dy = -n; dy <= n; ++dy)
+			{
+				if (CellSpread::GetDistance(dx, dy) <= (size_t)n)
+					++count;
+			}
+		}
+		return count;
+	}
+
+	int EngineLimit()
+	{
+		if (Global.EngineSpreadLimit.isset())
+			return Global.EngineSpreadLimit.Get();
+
+		static int limit = -2;   // -2 = not measured yet
+		if (limit != -2)
+			return limit;
+
+		constexpr int MaxProbe = 32;
+		limit = -1;
+		for (int n = 0; n <= MaxProbe; ++n)
+		{
+			if ((int)CellSpread::NumCells((unsigned int)n) != ExpectedCells(n))
+				break;
+			limit = n;
+		}
+
+		Debug::Log("[WeaponExt] WarheadSize: engine spread table (0x7ED3D0) raw entries 0-16:");
+		for (int n = 0; n <= 16; ++n)
+			Debug::Log(" %u", (unsigned int)CellSpread::NumCells((unsigned int)n));
+		Debug::Log("\n");
+
+		if (limit < 0)
+			Debug::Log("[WeaponExt] WarheadSize: could NOT establish the engine spread limit; "
+				"scaled warheads will not grow past their own CellSpread (the overflow pass "
+				"covers the rest). Set [CombatDamage] WarheadSize.EngineSpreadLimit= to override.\n");
+		else
+			Debug::Log("[WeaponExt] WarheadSize: engine spread limit measured as %d cells.\n", limit);
+
+		return limit;
+	}
 
 	// Warhead value if set, else the global, else "no limit" (returns false).
 	bool Resolve(const Nullable<double>* pLocal, const Nullable<double>& global, double& out)
@@ -231,6 +290,8 @@ namespace
 		WarheadTypeClass* Warhead;
 		DWORD Ebp;
 		SpreadT Previous;   // value to put back when this frame pops
+		double FullSpread;  // the scaled spread before the engine-limit clamp
+		bool Overflow;      // FullSpread > what was written, ring pass wanted
 	};
 
 	// Nesting depth is bounded by how deep death-weapon chains recurse; 64 is
@@ -301,11 +362,11 @@ namespace
 	}
 
 	// WarheadSize.Attach: give every eligible techno inside this detonation's
-	// CellSpread the timed multiplier. Runs while this bullet's own frame is
-	// still pushed, so a scaled detonation also buffs a scaled area.
+	// spread the timed multiplier. spreadCells is the FULL scaled spread
+	// (past the engine limit too), so a scaled detonation buffs its whole area.
 	// Iteration is over the engine's own TechnoClass::Array in its order and
 	// only writes our map -- deterministic on every client.
-	void ApplyAttach(BulletClass* pBullet, const CoordStruct& where)
+	void ApplyAttach(BulletClass* pBullet, const CoordStruct& where, double spreadCells)
 	{
 		auto const pWH = pBullet->WH;
 		auto const pExt = pWH ? WarheadTypeExt::ExtMap.Find(pWH) : nullptr;
@@ -323,7 +384,7 @@ namespace
 					&& HouseAllowed(houses, pFirerHouse, pTechno->Owner);
 			};
 
-		const double radius = (double)pWH->CellSpread * 256.0;   // leptons
+		const double radius = spreadCells * 256.0;   // leptons
 		if (radius <= 0.0)
 		{
 			// No spread: only the thing that was actually hit.
@@ -349,6 +410,68 @@ namespace
 			const double dz = (double)c.Z - where.Z;
 			if (dx * dx + dy * dy + dz * dz <= radiusSq)
 				Attach(pTechno, multiplier, untilFrame);
+		}
+	}
+
+	bool OverflowEnabled(const WarheadTypeExt::ExtData* pExt)
+	{
+		if (pExt && pExt->WarheadSize_Overflow.isset())
+			return pExt->WarheadSize_Overflow.Get();
+		return Global.Overflow.Get(true);
+	}
+
+	// Step 3: damage the ring the engine could not reach -- technos farther
+	// than innerCells and no farther than outerCells from the detonation.
+	// Runs while CellSpread still holds innerCells (the clamped value), and
+	// passes the inner edge as the distance, so ReceiveDamage's own falloff
+	// gives every ring victim the warhead's edge damage (PercentAtMax) with
+	// the normal Verses / armor / ownership rules.
+	//
+	// Victims are snapshotted first (ReceiveDamage can kill, which reshapes
+	// TechnoClass::Array and can nest further detonations), then each is
+	// re-checked for IsAlive right before it is hit -- the same pattern
+	// Phobos uses for its own area effects. Order is the engine's array
+	// order: deterministic on every client.
+	void ApplyOverflow(BulletClass* pBullet, const CoordStruct& where,
+		double innerCells, double outerCells)
+	{
+		auto const pWH = pBullet->WH;
+		const int damage = pBullet->Health;   // bullets carry their damage in Health
+		if (!pWH || damage == 0 || outerCells <= innerCells)
+			return;
+
+		const double inner = innerCells * 256.0;
+		const double outer = outerCells * 256.0;
+		const double innerSq = inner * inner;
+		const double outerSq = outer * outer;
+
+		std::vector<TechnoClass*> victims;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pTechno = TechnoClass::Array.Items[i];
+			if (!pTechno || !pTechno->IsAlive || pTechno->InLimbo || !pTechno->IsOnMap)
+				continue;
+
+			const CoordStruct c = pTechno->GetCoords();
+			const double dx = (double)c.X - where.X;
+			const double dy = (double)c.Y - where.Y;
+			const double dz = (double)c.Z - where.Z;
+			const double dSq = dx * dx + dy * dy + dz * dz;
+			if (dSq > innerSq && dSq <= outerSq)
+				victims.push_back(pTechno);
+		}
+
+		TechnoClass* const pAttacker = pBullet->Owner;
+		HouseClass* const pHouse = FirerHouseFor(pBullet);
+		const int edge = (int)inner;
+
+		for (auto const pVictim : victims)
+		{
+			if (!pVictim->IsAlive)
+				continue;
+
+			int dealt = damage;
+			pVictim->ReceiveDamage(&dealt, edge, pWH, pAttacker, false, false, pHouse);
 		}
 	}
 }
@@ -410,6 +533,8 @@ DEFINE_HOOK(0x679A15, RulesData_LoadBeforeTypeData_WeaponExt, 0x6)
 	Global.MultiplierFloor.Read(exINI, section, "WarheadSize.MultiplierFloor");
 	Global.SpreadCap.Read(exINI, section, "WarheadSize.SpreadCap");
 	Global.SpreadFloor.Read(exINI, section, "WarheadSize.SpreadFloor");
+	Global.Overflow.Read(exINI, section, "WarheadSize.Overflow");
+	Global.EngineSpreadLimit.Read(exINI, section, "WarheadSize.EngineSpreadLimit");
 
 	Debug::Log("[WeaponExt] [CombatDamage] WarheadSize ignoreBelow=%.2f ignoreAbove=%.2f "
 		"multCap=%.2f multFloor=%.2f spreadCap=%.2f spreadFloor=%.2f (-1 = unset)\n",
@@ -452,8 +577,18 @@ DEFINE_HOOK(0x4690C1, BulletClass_Detonate_WarheadSizeApply, 0x8)
 	if (scaled < 0.0)
 		return 0;
 
-	Frames[FrameCount++] = { pThis, pWH, R->EBP(), pWH->CellSpread };
-	pWH->CellSpread = (SpreadT)scaled;
+	// Step 3: never hand the engine more spread than its table covers. The
+	// ceiling is the measured limit, but never below the warhead's own
+	// CellSpread (a modder's existing value is left exactly as vanilla runs
+	// it). With no measurable limit, the ceiling IS the warhead's own value.
+	const int limit = EngineLimit();
+	const double own = (double)original;
+	const double ceiling = limit >= 0 ? ((double)limit > own ? (double)limit : own) : own;
+	const double written = scaled > ceiling ? ceiling : scaled;
+	const bool overflow = scaled > written && OverflowEnabled(pExt);
+
+	Frames[FrameCount++] = { pThis, pWH, R->EBP(), pWH->CellSpread, overflow ? scaled : written, overflow };
+	pWH->CellSpread = (SpreadT)written;
 
 	// Remembered for the anim swap at 0x469C46, which runs after the restore.
 	if (pExt && !pExt->WarheadSize_AnimList_Scaled.empty())
@@ -474,12 +609,36 @@ DEFINE_HOOK(0x469AA4, BulletClass_Detonate_WarheadSizeRestore, 0x5)
 	while (FrameCount > 0 && Frames[FrameCount - 1].Ebp < ebp)
 		PopTop();
 
-	// Before popping our own frame, so a scaled warhead attaches over its
-	// scaled area.
-	if (pThis && pCoords)
-		ApplyAttach(pThis, *pCoords);
+	const bool ownFrame = FrameCount > 0
+		&& Frames[FrameCount - 1].Ebp == ebp
+		&& Frames[FrameCount - 1].Bullet == pThis;
 
-	if (FrameCount > 0
+	// Both run before our own frame pops: the overflow ring needs CellSpread
+	// still at the clamped value (its falloff edge), and Attach covers the
+	// full scaled area.
+	if (pThis && pCoords)
+	{
+		if (ownFrame)
+		{
+			// Copy first: the ring pass can nest detonations that push and
+			// pop frames above ours.
+			const Frame f = Frames[FrameCount - 1];
+			if (f.Overflow)
+				ApplyOverflow(pThis, *pCoords, (double)f.Warhead->CellSpread, f.FullSpread);
+			ApplyAttach(pThis, *pCoords, f.FullSpread);
+		}
+		else if (pThis->WH)
+		{
+			ApplyAttach(pThis, *pCoords, (double)pThis->WH->CellSpread);
+		}
+	}
+
+	// Nested detonations from the ring pass may have left deeper frames.
+	while (FrameCount > 0 && Frames[FrameCount - 1].Ebp < ebp)
+		PopTop();
+
+	if (ownFrame
+		&& FrameCount > 0
 		&& Frames[FrameCount - 1].Ebp == ebp
 		&& Frames[FrameCount - 1].Bullet == pThis)
 	{

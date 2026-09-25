@@ -51,6 +51,13 @@ public:
 		// because Phobos warhead effects only apply with CellSpread!=0.
 		Valueable<double> WarheadSize_FromZero;
 
+		// ---- Step 3: beyond the engine's spread limit (9.4) ----
+		// When the scaled spread is larger than the engine's area-damage
+		// routine can safely take, CellSpread is held at that limit and the
+		// ring beyond it is damaged by our own pass. no = just stop at the
+		// limit. Unset falls through to [CombatDamage], then to yes.
+		Nullable<bool> WarheadSize_Overflow;
+
 		// ---- Step 2: timed multiplier applied by this warhead (9.1) ----
 		// Unset = this warhead attaches nothing. Every techno inside this
 		// warhead's (possibly scaled) CellSpread, filtered by Houses, gets the
@@ -77,6 +84,7 @@ public:
 			, WarheadSize_SpreadCap { }
 			, WarheadSize_SpreadFloor { }
 			, WarheadSize_FromZero { 0.0 }
+			, WarheadSize_Overflow { }
 			, WarheadSize_Attach { }
 			, WarheadSize_Attach_Duration { 0 }
 			, WarheadSize_Attach_Houses { WarheadSizeHouse_All }
@@ -100,6 +108,7 @@ public:
 				|| WarheadSize_MultiplierCap.isset() || WarheadSize_MultiplierFloor.isset()
 				|| WarheadSize_SpreadCap.isset() || WarheadSize_SpreadFloor.isset()
 				|| WarheadSize_FromZero > 0.0
+				|| WarheadSize_Overflow.isset()
 				|| HasAttach() || !WarheadSize_AnimList_Scaled.empty();
 		}
 

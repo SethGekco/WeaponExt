@@ -906,13 +906,43 @@ vanilla anim plays).
   EBP have provably returned (a live caller sits higher on the stack) and are
   unwound. On restore, deeper frames (EBP < current) unwind first.
 
-### 9.4 Beyond the engine's spread cap (step 3)
-Vanilla area damage iterates a fixed cell-offset table (roughly 10–11 cells,
-**to verify**); `WarheadSize.Max=15` cannot reach past it on its own. The
-extra ring needs our own damage pass (the RadField §5.6 machinery):
-`WarheadSize.Overflow=yes` damages objects between the table cap and the
-scaled radius, with vanilla `PercentAtMax` falloff extended over the full
-radius.
+### 9.4 Beyond the engine's spread limit (step 3)
+`MapClass::DamageArea` looks the spread up in the engine's cell-count table
+(`CellSpread::NumCells`, `0x7ED3D0`); a spread past the end of that table
+reads garbage. Its length isn't documented anywhere we could check, so it is
+**measured at runtime** on the first scaled detonation: entry *n* must equal
+the number of cell offsets within distance *n* under the engine's own metric
+(`CellSpread::GetDistance`: longer axis + half the shorter). The last
+matching *n* is the limit. The raw entries 0–16 and the result are written
+to debug.log.
+
+```ini
+[CombatDamage]
+WarheadSize.Overflow=yes            ; default yes; per-warhead override too
+WarheadSize.EngineSpreadLimit=      ; skip the measurement and trust this value
+```
+
+Per scaled detonation:
+- **Ceiling** = the measured limit, but never below the warhead's own
+  CellSpread (a value a modder already uses is left exactly as vanilla runs
+  it). If no limit could be measured, the ceiling *is* the warhead's own
+  CellSpread: enlargement then happens entirely through the overflow pass.
+- `CellSpread` written for the engine = `min(scaled, ceiling)`.
+- **Overflow ring** (`WarheadSize.Overflow=yes`, scaled > ceiling): our own
+  pass damages every techno farther than the ceiling and no farther than the
+  scaled spread. It calls `ReceiveDamage` with the bullet's damage, the
+  warhead, the firer and the firing house, and passes the ceiling as the
+  distance while `CellSpread` still holds the ceiling. Ring victims therefore
+  take the warhead's **edge damage** (`PercentAtMax`), with the usual
+  Verses/armor/ownership rules.
+- `WarheadSize.Overflow=no`: the spread simply stops at the ceiling.
+- Victims are snapshotted before any damage and re-checked `IsAlive` before
+  each hit (the Phobos pattern). Iteration is in `TechnoClass::Array` order,
+  so it's deterministic on every client.
+- `WarheadSize.Attach` covers the full scaled area, ring included.
+
+Not covered by the ring pass: terrain, overlays/walls, tiberium, bridges
+(technos only).
 
 ### 9.5 Bigger explosion drawing (steps 2 and 4)
 - **Step 2 — art swap (done):** `WarheadSize.AnimList.Scaled=` (parallel to
@@ -943,10 +973,23 @@ radius.
   CI build confirms it resolves.
 - Phobos registers no save/load hooks for WarheadTypeExt and neither do we
   (INI-only data). Verify the tags survive save → load in-game.
-- Chain order at `0x469AA4` vs Phobos's Extras handler is load-order
-  dependent: if ours runs first, Phobos's warhead effects see the unscaled
-  radius. Vanilla damage is always scaled. RE item: a restore seat after
-  Extras (Detonate epilogue) would make Phobos effects scale deterministically.
+- ~~Phobos warhead effects may miss the scaling.~~ Checked in Phobos source:
+  its bullet-path warhead effects run at `0x46920B` (`BulletClass_Detonate`,
+  which clears `InDamageArea`), inside our `0x4690C1`…`0x469AA4` bracket,
+  and the vanilla `DamageArea` call falls in the same window (Phobos only
+  re-arms `InDamageArea` at `0x469AA4`). Both see the scaled spread. Only
+  Phobos's *Extras* at `0x469AA4` itself (ExtraWarheads, ReturnWeapon) are
+  order-dependent against our restore.
+- Step 3 ring damage assumes `ReceiveDamage`'s own falloff uses the
+  `DistanceFromEpicenter` argument together with the warhead's current
+  `CellSpread` (so passing the ceiling gives edge damage). **Verify in-game**:
+  if ring victims take full damage instead, the falloff lives in DamageArea
+  and the ring pass must scale the damage itself.
+- Engine-limit measurement assumes `NumCells(n)` is the cumulative count of
+  cells within distance *n*. If that's wrong, the measurement stops early
+  (safe: more of the area goes through the ring pass) or fails outright
+  (safe: logged, ceiling = the warhead's own value). The debug.log line shows
+  the raw table either way.
 - Addresses not yet checked against the Hook Encyclopedia in this session —
   the CI overlap/bounds check does that on the first PR build.
 
@@ -985,7 +1028,7 @@ radius.
 | L3 | Bunker link, open-topped filter, house/type filters, `Contained.` shorthand |
 | W1 | **Started.** Country `WarheadSize.Multiplier`; `[CombatDamage]` + per-warhead `IgnoreSpreadBelow/Above`, `MultiplierCap/Floor`, `SpreadCap/Floor`; `Exempt`, `FromZero`; Detonate scale-and-restore (§9.2–9.3) |
 | W2 | **Started.** `WarheadSize.Attach` timed effect; fire-time capture (multiplier + house); `WarheadSize.AnimList.Scaled/Threshold` swap (§9.2, §9.6) |
-| W3 | Overflow damage pass beyond the engine spread cap |
+| W3 | **Started.** Runtime-measured engine spread limit + clamp; `WarheadSize.Overflow` ring damage pass; `WarheadSize.EngineSpreadLimit` override (§9.4, §9.6) |
 | W4 | RE anim draw seat; true SHP/voxel draw scaling |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
