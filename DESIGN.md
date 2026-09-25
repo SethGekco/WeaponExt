@@ -742,6 +742,74 @@ bunker teardown needs `ClearBunker` called explicitly after we empty the link.
 
 ---
 
+## 8b. Pillar: Spawn on detonation  (handed over from TechnoAttachmentExt)
+
+**Origin.** Raised there as an `InstantSpawn.On=hit` trigger and deliberately cut
+from that DLL — see `TechnoAttachmentExt/docs/DESIGN-H1-InstantSpawn.md` §3.1.
+It lands here because the facts it needs belong to the impact, not the firer.
+
+**What it is.** When a projectile detonates, place one or more objects at the
+impact point — instead of, or as well as, dealing damage. The mortar that
+scatters mines, the pod that lands a squad, the warhead that leaves a wall
+behind, the shell that drops a sensor.
+
+**Why the warhead and not the firer** (the argument that moved it here):
+
+* the **impact point** is a cell the firer never knew — it moved, the target
+  moved, the shot scattered, or it was aimed at bare ground;
+* the shot can **outlive its firer**, so a firer-side rule has nothing to hang on;
+* one warhead is reused across many weapons, so it is configured once rather than
+  on every firer;
+* the firer may not be the owner (superweapons, map triggers, script damage), and
+  a warhead already carries its invoker.
+
+A firer-side "on fire, spawn at my target" is a *different* feature and stays in
+TechnoAttachmentExt as `InstantSpawn.On=fire` + `At=target`. It fires at the
+moment of shooting, at the target's cell as it was then, and never learns whether
+the shot hit, missed or was intercepted. Detonation-time spawning cannot be
+expressed that way.
+
+**Tags** — deliberately the same key names and value spaces as `FreeUnit.*`
+(FreeUnitExt) and `InstantSpawn.*` (TechnoAttachmentExt), so all three read alike:
+
+```ini
+[SomeWarhead]
+SpawnOnDetonate=DRON,DRON
+SpawnOnDetonate.Count=1
+SpawnOnDetonate.Chance=100     ; percent, synced RNG
+SpawnOnDetonate.Owner=Invoker  ; Invoker|Civilian|Special|Neutral|Random|RandomAlly|RandomEnemy
+SpawnOnDetonate.Facing=random  ; N NE E SE S SW W NW | random | 0-255
+SpawnOnDetonate.Cell=          ; which side of the impact
+SpawnOnDetonate.Spacing=0
+SpawnOnDetonate.Range=1        ; how far to search for a free cell
+SpawnOnDetonate.Scatter=0
+SpawnOnDetonate.OnBlocked=nearest   ; nearest | skip | stack
+SpawnOnDetonate.Mission=
+SpawnOnDetonate.Anim=
+```
+
+**The hazard to design around, stated up front.** A failed placement in this
+engine is *destructive* — the engine destroys the object rather than leaving it
+half-placed, and that destruction re-enters any removal hooks the DLL has
+registered. In TechnoAttachmentExt this exact mechanism produced a null-pointer
+crash (`AttachmentClass::AI()`, children nulled underneath a stale guard). Treat
+every placement call as able to destroy the object and invalidate pointers held
+across it, and never place while iterating a live engine collection. See the YR
+Hook Encyclopedia, `Techno-Instance-Lifecycle.md`.
+
+**Determinism.** `Chance`, `Scatter` and any random facing or random pick must use
+`ScenarioClass::Random`, and the free-cell search must be a fixed spiral, or two
+peers place different objects in different cells.
+
+**Seat.** The shared warhead-detonate seat the R- and L-phases already rely on.
+
+**Namespace note.** TechnoAttachmentExt may implement `SplashToRelatives.*` on
+warhead sections (it owns the attachment graph, which this DLL cannot see — see
+`TechnoAttachmentExt/docs/DESIGN-SplashOntoRelatives.md`). Two DLLs reading the
+same warhead sections is fine as long as the key prefixes stay distinct.
+
+---
+
 ## 9. Phase roadmap
 
 | Phase | Deliverable |
@@ -773,6 +841,8 @@ bunker teardown needs `ClearBunker` called explicitly after we empty the link.
 | L1 | Passengers + Occupants damage with `Eject=no` (in-place), snapshot/liveness discipline |
 | L2 | Ejection path: deterministic cell search, `Eject=damage/always`, fallbacks, double-kill guard |
 | L3 | Bunker link, open-topped filter, house/type filters, `Contained.` shorthand |
+| SD1 | SpawnOnDetonate core (§8b): payload, Count, Chance, Owner, Facing, OnBlocked — shares the detonate seat with R1/L0 |
+| SD2 | Anims, Scatter, Spacing, Mission; distribution shapes |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
 R1 can run early too — it needs only our own containers plus the shared
