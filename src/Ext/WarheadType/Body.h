@@ -75,6 +75,14 @@ public:
 		ValueableVector<AnimTypeClass*> WarheadSize_AnimList_Scaled;
 		Nullable<double> WarheadSize_AnimList_Threshold;
 
+		// ---- Step 4: draw this warhead's explosion anims bigger (9.5) ----
+		// The anim created by a scaled detonation is tagged with a draw scale
+		// = the detonation's effective multiplier (capped by .Max). Step 4a
+		// only tags and probes; the actual stretched draw lands in 4b once
+		// the shape-draw call inside AnimClass::DrawIt is mapped.
+		Valueable<bool> WarheadSize_AnimScale;
+		Nullable<double> WarheadSize_AnimScale_Max;
+
 		ExtData(WarheadTypeClass* OwnerObject) : Extension<WarheadTypeClass>(OwnerObject)
 			, WarheadSize_Exempt { false }
 			, WarheadSize_IgnoreSpreadBelow { }
@@ -90,6 +98,8 @@ public:
 			, WarheadSize_Attach_Houses { WarheadSizeHouse_All }
 			, WarheadSize_AnimList_Scaled { }
 			, WarheadSize_AnimList_Threshold { }
+			, WarheadSize_AnimScale { false }
+			, WarheadSize_AnimScale_Max { }
 		{ }
 
 		virtual ~ExtData() = default;
@@ -109,7 +119,14 @@ public:
 				|| WarheadSize_SpreadCap.isset() || WarheadSize_SpreadFloor.isset()
 				|| WarheadSize_FromZero > 0.0
 				|| WarheadSize_Overflow.isset()
-				|| HasAttach() || !WarheadSize_AnimList_Scaled.empty();
+				|| HasAttach() || !WarheadSize_AnimList_Scaled.empty()
+				|| WarheadSize_AnimScale;
+		}
+
+		// Needs the detonation's effective multiplier remembered for 0x469C46.
+		bool WantsAnimHandling() const
+		{
+			return !WarheadSize_AnimList_Scaled.empty() || WarheadSize_AnimScale;
 		}
 
 		bool HasAttach() const

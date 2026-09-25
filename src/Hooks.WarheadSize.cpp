@@ -38,6 +38,7 @@
 #include <HouseTypeClass.h>
 #include <CCINIClass.h>
 #include <AnimTypeClass.h>
+#include <AnimClass.h>
 #include <Unsorted.h>
 #include <CellSpread.h>
 
@@ -590,8 +591,9 @@ DEFINE_HOOK(0x4690C1, BulletClass_Detonate_WarheadSizeApply, 0x8)
 	Frames[FrameCount++] = { pThis, pWH, R->EBP(), pWH->CellSpread, overflow ? scaled : written, overflow };
 	pWH->CellSpread = (SpreadT)written;
 
-	// Remembered for the anim swap at 0x469C46, which runs after the restore.
-	if (pExt && !pExt->WarheadSize_AnimList_Scaled.empty())
+	// Remembered for the anim swap / anim scale at 0x469C46, which runs after
+	// the restore.
+	if (pExt && pExt->WantsAnimHandling())
 		Bullets[pThis].AppliedMultiplier = effective;
 
 	return 0;
@@ -707,10 +709,65 @@ DEFINE_HOOK(0x6F4500, TechnoClass_DTOR_WarheadSize, 0x5)
 // runs first we are never called and the vanilla anim plays -- no crash,
 // just no swap. Also not covered: Phobos AnimList.CreateAll (reads AnimList
 // directly, ignoring EBX) and SplashList anims (not in AnimList).
+namespace
+{
+	// Step 2 swap. Returns the anim type that should be created (the engine's
+	// pick when there is nothing to swap).
+	AnimTypeClass* SwapAnim(const WarheadTypeExt::ExtData* pExt, WarheadTypeClass* pWH,
+		AnimTypeClass* pAnimType, double m)
+	{
+		if (pExt->WarheadSize_AnimList_Scaled.empty())
+			return pAnimType;
+
+		const bool passed = pExt->WarheadSize_AnimList_Threshold.isset()
+			? m >= pExt->WarheadSize_AnimList_Threshold.Get()
+			: m > 1.0;
+		if (!passed)
+			return pAnimType;
+
+		// Position of the engine's pick in the warhead's own AnimList.
+		auto const& list = pWH->AnimList;
+		int index = -1;
+		for (int i = 0; i < list.Count; ++i)
+		{
+			if (list.Items[i] == pAnimType)
+			{
+				index = i;
+				break;
+			}
+		}
+		if (index < 0)
+			return pAnimType;   // not from AnimList (e.g. a splash) -- leave it alone
+
+		auto const& scaled = pExt->WarheadSize_AnimList_Scaled;
+		const int last = (int)scaled.size() - 1;
+		auto const pNew = scaled[index < last ? index : last];
+		return pNew ? pNew : pAnimType;
+	}
+
+	// ---- Step 4a: per-anim draw scale -------------------------------------
+	// The anim is created right after 0x469C46 (by Phobos's handler, or by
+	// vanilla), so the scale is handed over through a one-shot "pending"
+	// slot that the next AnimClass CTOR consumes -- but only if that anim has
+	// the expected type and is built in the same frame, so a pending scale
+	// can never leak onto some unrelated anim later. Overwritten by the next
+	// detonation either way.
+	struct PendingScale
+	{
+		const AnimTypeClass* Type = nullptr;
+		double Scale = 1.0;
+		int Frame = -1;
+	} Pending;
+
+	std::unordered_map<const AnimClass*, double> AnimScales;
+}
+
 DEFINE_HOOK(0x469C46, BulletClass_Detonate_WarheadSizeAnim, 0x8)
 {
 	GET(BulletClass*, pThis, ESI);
 	GET(AnimTypeClass*, pAnimType, EBX);
+
+	Pending.Type = nullptr;   // a stale handoff never outlives the next detonation
 
 	if (!pThis || !pAnimType || !pThis->WH)
 		return 0;
@@ -720,35 +777,80 @@ DEFINE_HOOK(0x469C46, BulletClass_Detonate_WarheadSizeAnim, 0x8)
 		return 0;
 
 	auto const pExt = WarheadTypeExt::ExtMap.Find(pThis->WH);
-	if (!pExt || pExt->WarheadSize_AnimList_Scaled.empty())
+	if (!pExt || !pExt->WantsAnimHandling())
 		return 0;
 
 	const double m = it->second.AppliedMultiplier;
-	const bool passed = pExt->WarheadSize_AnimList_Threshold.isset()
-		? m >= pExt->WarheadSize_AnimList_Threshold.Get()
-		: m > 1.0;
-	if (!passed)
+
+	auto const pFinal = SwapAnim(pExt, pThis->WH, pAnimType, m);
+	if (pFinal != pAnimType)
+		R->EBX(reinterpret_cast<DWORD>(pFinal));
+
+	if (pExt->WarheadSize_AnimScale)
+	{
+		double scale = m;
+		if (pExt->WarheadSize_AnimScale_Max.isset() && scale > pExt->WarheadSize_AnimScale_Max.Get())
+			scale = pExt->WarheadSize_AnimScale_Max.Get();
+		if (scale > 0.0 && scale != 1.0)
+			Pending = { pFinal, scale, Unsorted::CurrentFrame };
+	}
+
+	return 0;
+}
+
+// Phobos AnimClass_CTOR (src/Ext/Anim/Body.cpp): ESI = anim, Type already
+// set (Phobos reads pItem->Type here). Returns 0.
+DEFINE_HOOK(0x4226F6, AnimClass_CTOR_WarheadSize, 0x6)
+{
+	GET(AnimClass*, pItem, ESI);
+
+	if (Pending.Type && pItem && pItem->Type == Pending.Type
+		&& Pending.Frame == Unsorted::CurrentFrame)
+	{
+		AnimScales[pItem] = Pending.Scale;
+		Pending.Type = nullptr;   // one-shot
+	}
+
+	return 0;
+}
+
+// Phobos AnimClass_DTOR (src/Ext/Anim/Body.cpp): ESI = anim. Returns 0.
+DEFINE_HOOK(0x422967, AnimClass_DTOR_WarheadSize, 0x6)
+{
+	GET(AnimClass*, pItem, ESI);
+
+	AnimScales.erase(pItem);
+
+	return 0;
+}
+
+// Step 4a PROBE -- read-only, changes nothing on screen. Co-tenant: Phobos
+// AnimClass_DrawIt_DrawOffset at both addresses (always returns 0; ESI =
+// anim, on-screen draw location at STACK_OFFSET(0x110, 0x4) = [esp+0x114]).
+// Logs the first draws of scaled anims so an in-game run confirms (1) the
+// CTOR handoff tags the right anims and (2) which DrawIt path they take,
+// before 4b replaces the shape draw.
+DEFINE_HOOK_AGAIN(0x422CD8, AnimClass_DrawIt_WarheadSizeProbe, 0x6)
+DEFINE_HOOK(0x423122, AnimClass_DrawIt_WarheadSizeProbe, 0x6)
+{
+	GET(AnimClass* const, pThis, ESI);
+
+	static int logged = 0;
+	constexpr int MaxLines = 60;
+	if (logged >= MaxLines || !pThis)
 		return 0;
 
-	// Position of the engine's pick in the warhead's own AnimList.
-	auto const& list = pThis->WH->AnimList;
-	int index = -1;
-	for (int i = 0; i < list.Count; ++i)
-	{
-		if (list.Items[i] == pAnimType)
-		{
-			index = i;
-			break;
-		}
-	}
-	if (index < 0)
-		return 0;   // not from AnimList (e.g. a splash) -- leave it alone
+	auto const it = AnimScales.find(pThis);
+	if (it == AnimScales.end())
+		return 0;
 
-	auto const& scaled = pExt->WarheadSize_AnimList_Scaled;
-	const int last = (int)scaled.size() - 1;
-	auto const pNew = scaled[index < last ? index : last];
-	if (pNew)
-		R->EBX(reinterpret_cast<DWORD>(pNew));
+	auto const pLocation = R->Stack<Point2D*>(0x114);
+	++logged;
+	Debug::Log("[WeaponExt][animscale] path=0x%X anim=%s scale=%.2f frame=%d screen=(%d,%d)%s\n",
+		R->Origin(), pThis->Type ? pThis->Type->ID : "<null>", it->second,
+		pThis->Animation.Value,
+		pLocation ? pLocation->X : 0, pLocation ? pLocation->Y : 0,
+		logged == MaxLines ? " [probe log limit reached]" : "");
 
 	return 0;
 }

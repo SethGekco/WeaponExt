@@ -73,6 +73,8 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	ReadHouses(pINI, section, "WarheadSize.Attach.Houses", this->WarheadSize_Attach_Houses);
 	this->WarheadSize_AnimList_Scaled.Read(exINI, section, "WarheadSize.AnimList.Scaled");
 	this->WarheadSize_AnimList_Threshold.Read(exINI, section, "WarheadSize.AnimList.Threshold");
+	this->WarheadSize_AnimScale.Read(exINI, section, "WarheadSize.AnimScale");
+	this->WarheadSize_AnimScale_Max.Read(exINI, section, "WarheadSize.AnimScale.Max");
 
 	if (this->WarheadSize_Attach.isset() && this->WarheadSize_Attach_Duration <= 0)
 	{
@@ -125,6 +127,8 @@ void WarheadTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->WarheadSize_Attach_Houses)
 		.Process(this->WarheadSize_AnimList_Scaled)
 		.Process(this->WarheadSize_AnimList_Threshold)
+		.Process(this->WarheadSize_AnimScale)
+		.Process(this->WarheadSize_AnimScale_Max)
 		;
 }
 

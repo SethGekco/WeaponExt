@@ -958,6 +958,59 @@ Not covered by the ring pass: terrain, overlays/walls, tiberium, bridges
   cost with many anims. **Render-only → no sync risk.** No known framework
   does SHP scaling.
 
+#### Step 4a (done): tagging + draw probe
+```ini
+[SOMEWARHEAD]
+WarheadSize.AnimScale=yes        ; tag this warhead's explosion anims with a
+                                 ;   draw scale = the detonation's effective
+                                 ;   multiplier (also shrinks when < 1)
+WarheadSize.AnimScale.Max=2.0    ; cap on that draw scale
+```
+- **Handoff:** at `0x469C46` (after any step 2 swap) the scale goes into a
+  one-shot *pending* slot. The next `AnimClass` constructed consumes it,
+  but only if its `Type` matches and it's built in the same frame; the next
+  detonation clears it either way. Same WeaponExt-before-Phobos load-order
+  requirement as the swap.
+- **Seats (Phobos source, all `return 0`):** `0x4226F6` `AnimClass_CTOR`
+  (ESI, `Type` already set), `0x422967` `AnimClass_DTOR` (ESI).
+- **Probe:** `0x423122` + `0x422CD8` (Phobos `AnimClass_DrawIt_DrawOffset`,
+  ESI = anim, screen location at `[esp+0x114]`) logs the first 60 draws of
+  tagged anims as `[WeaponExt][animscale] path=… anim=… scale=… frame=…
+  screen=(x,y)`. **Nothing is drawn differently yet.**
+
+#### Step 4b (RE first): the stretched draw
+Map from the registry + Phobos source (`src/Ext/Anim/Hooks.cpp`) of
+`AnimClass::DrawIt`:
+
+| Addr | Phobos seat | Returns | Notes |
+|---|---|---|---|
+| `0x422CD8` / `0x423122` | DrawOffset | always 0 | two draw paths; location `[esp+0x114]` |
+| `0x423061` | Visibility | 0 or `0x4238A3` | `0x4238A3` = end of DrawIt |
+| `0x423183` | Translucency | `0x4230FE` / `0x4238A3` | EBX = BlitterFlags; starves co-hooks |
+| `0x4232CE` | (Ares/Antares SetPalette) | — | palette chosen here |
+| `0x4232E2` | AltPalette | always `0x4232EA` | starves co-hooks |
+| `0x423365` | ExtraShadow | always non-zero | starves co-hooks |
+| `0x423654`…`0x4236F0` | Tiled_* | — | tiled-anim path |
+| `0x423855` | ShadowLocation | always `0x42385D` | shadow pass |
+
+RE checklist (needs disassembly of `gamemd.exe`):
+- [ ] Find the main shape-draw `CALL` between `0x4232EA` and `0x423365`
+      (after the palette is final, before the extra shadow). Record its
+      address, argument layout (surface, SHP, frame, point, bounds, flags,
+      Z, ConvertClass) and the stolen bytes of the instruction to hook.
+- [ ] Same for the shadow draw after `0x42385D`.
+- [ ] Confirm whether the dirty-rect / redraw bounds come from
+      `AnimClass::GetDimensions`-style virtuals (must grow with the scale,
+      or big frames clip and leave trails).
+- [ ] Add the findings to the Hook Encyclopedia (no DamageArea/Anim-draw
+      page exists yet).
+
+Implementation once mapped: at the draw call, for tagged anims, skip the 1:1
+call and instead (1) draw the frame to a scratch surface with the same
+ConvertClass/flags, (2) nearest-neighbour stretch it onto the target surface
+around the same anchor, with clipping. Voxel anims (`VoxelAnimClass`) are a
+separate class and draw path, handled after SHP.
+
 ### 9.6 Known gaps (to close)
 - ~~Firer dying before impact → unscaled.~~ Closed in step 2: multiplier and
   firing house are captured at fire time (`0x6FF660`). Bullets that did not
@@ -1029,7 +1082,7 @@ Not covered by the ring pass: terrain, overlays/walls, tiberium, bridges
 | W1 | **Started.** Country `WarheadSize.Multiplier`; `[CombatDamage]` + per-warhead `IgnoreSpreadBelow/Above`, `MultiplierCap/Floor`, `SpreadCap/Floor`; `Exempt`, `FromZero`; Detonate scale-and-restore (§9.2–9.3) |
 | W2 | **Started.** `WarheadSize.Attach` timed effect; fire-time capture (multiplier + house); `WarheadSize.AnimList.Scaled/Threshold` swap (§9.2, §9.6) |
 | W3 | **Started.** Runtime-measured engine spread limit + clamp; `WarheadSize.Overflow` ring damage pass; `WarheadSize.EngineSpreadLimit` override (§9.4, §9.6) |
-| W4 | RE anim draw seat; true SHP/voxel draw scaling |
+| W4 | **Started.** 4a: `WarheadSize.AnimScale(.Max)` tagging via anim CTOR/DTOR + read-only DrawIt probe. 4b: RE the shape-draw call (§9.5 checklist), then stretched SHP draw; voxels after |
 
 Bounty first: fully understood funnel, zero RE risk, immediately testable.
 R1 can run early too — it needs only our own containers plus the shared
