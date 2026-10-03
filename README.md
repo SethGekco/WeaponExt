@@ -102,8 +102,10 @@ Magnetron.Deviation=          ; integer
 Magnetron.TurnRate=           ; integer
 
 ; --- letting go. Vanilla has NO beam-stop detection at all, so this is ours.
-Magnetron.ReleaseOnStop=no    ; release when the firer stops targeting the victim
-Magnetron.ReleaseOnStop.Delay=15 ; frames of grace before that counts as "stopped"
+Magnetron.ReleaseOnStop=no    ; release when the beam stops hitting the victim
+Magnetron.ReleaseOnStop.Delay=45 ; frames with no fresh beam hit before that
+                              ; counts as stopped. MUST exceed the weapon's ROF
+                              ; or the victim is dropped between shots.
 Magnetron.MaxHoldTime=-1      ; frames; hard ceiling on a hold (-1 = none)
 ```
 
