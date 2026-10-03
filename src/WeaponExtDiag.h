@@ -27,4 +27,8 @@ namespace WeaponDiag
 	// budget iterations -- the states you care about must stay distinguishable.
 	void PayoutLine(const char* reason, const char* earner,
 		const char* paidHouse, int amount);
+
+	// Magnetron releases. Separately budgeted again: these are rare but a
+	// stuck-victim bug shows up as a FLOOD, so the cap has to be its own.
+	void MagnetronLine(const char* why, const char* victim, const char* firer);
 }

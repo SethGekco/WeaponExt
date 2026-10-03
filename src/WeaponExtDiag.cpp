@@ -12,6 +12,10 @@ namespace
 	int PayoutCount = 0;
 	bool PayoutBudgetAnnounced = false;
 
+	constexpr int MagnetronLogLimit = 200;
+	int MagnetronCount = 0;
+	bool MagnetronBudgetAnnounced = false;
+
 	bool RanExeRun = false;
 	bool RanExeRunAlt = false;
 
@@ -56,6 +60,27 @@ void WeaponDiag::PayoutLine(const char* reason, const char* earner,
 	Debug::Log("[WeaponExt][pay %3d] %s: %s -> %s %+d\n",
 		PayoutCount, reason ? reason : "?", earner ? earner : "?",
 		paidHouse ? paidHouse : "?", amount);
+}
+
+void WeaponDiag::MagnetronLine(const char* why, const char* victim,
+	const char* firer)
+{
+	if (MagnetronCount >= MagnetronLogLimit)
+	{
+		if (!MagnetronBudgetAnnounced)
+		{
+			MagnetronBudgetAnnounced = true;
+			Debug::Log("[WeaponExt] Magnetron-log budget reached (%d).\n",
+				MagnetronLogLimit);
+		}
+		return;
+	}
+
+	++MagnetronCount;
+
+	Debug::Log("[WeaponExt][mag %3d] released %s (held by %s) -- %s\n",
+		MagnetronCount, victim ? victim : "?", firer ? firer : "?",
+		why ? why : "?");
 }
 
 bool WeaponDiag::ShouldLog()

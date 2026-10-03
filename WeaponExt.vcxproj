@@ -32,6 +32,10 @@
     <!-- P0: bounty probe -->
     <ClCompile Include="src\Hooks.Bounty.cpp" />
     <ClCompile Include="src\Bounty.cpp" />
+    <!-- M1: magnetron -->
+    <ClCompile Include="src\Magnetron.cpp" />
+    <ClCompile Include="src\Hooks.Magnetron.cpp" />
+    <ClCompile Include="src\Ext\WarheadType\Body.cpp" />
     <!-- Scatter (merged from ScatterExt) -->
     <ClCompile Include="src\ScatterExtDiag.cpp" />
     <ClCompile Include="src\Scatter.cpp" />
@@ -47,6 +51,8 @@
     <ClInclude Include="src\WeaponExt.h" />
     <ClInclude Include="src\WeaponExtDiag.h" />
     <ClInclude Include="src\Bounty.h" />
+    <ClInclude Include="src\Magnetron.h" />
+    <ClInclude Include="src\Ext\WarheadType\Body.h" />
     <ClInclude Include="src\ScatterExtDiag.h" />
     <ClInclude Include="src\Curve.h" />
     <ClInclude Include="src\CurveParse.h" />
