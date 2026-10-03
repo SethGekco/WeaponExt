@@ -48,6 +48,11 @@ namespace
 		// stopped" -- see the long comment on the release condition below.
 		int FramesSinceImbue;
 		bool NeedsFlightOverrides;
+		// Handoff bookkeeping: last seen position, how long it has sat still,
+		// and a latch so the swap happens exactly once per hold.
+		CoordStruct LastCoords;
+		int StillFrames;
+		bool HandedOff;
 	};
 
 	Hold Holds[MaxHolds] = {};
@@ -187,7 +192,8 @@ void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim)
 
 	// Flight overrides are deferred to the next PerFrame tick: this runs at
 	// ImbueLocomotor's *entry*, so the new locomotor does not exist yet.
-	Holds[HoldCount++] = Hold { pVictim, pFirer, pWH, 0, 0, true };
+	Holds[HoldCount++] = Hold { pVictim, pFirer, pWH, 0, 0, true,
+		pVictim->GetCoords(), 0, false };
 }
 
 void Magnetron::PerFrame()
@@ -231,6 +237,79 @@ void Magnetron::PerFrame()
 
 		++hold.HeldFrames;
 		++hold.FramesSinceImbue;
+
+		// --- movement tracking (for the "stopped" handoff trigger) --------
+		auto const coords = pVictim->GetCoords();
+		if (coords.X == hold.LastCoords.X && coords.Y == hold.LastCoords.Y
+			&& coords.Z == hold.LastCoords.Z)
+		{
+			++hold.StillFrames;
+		}
+		else
+		{
+			hold.StillFrames = 0;
+			hold.LastCoords = coords;
+		}
+
+		// --- handoff ------------------------------------------------------
+		// Rex's idea, and it is the thing that makes every non-jumpjet CLSID
+		// usable: let the imbued locomotor do the travelling, then swap to
+		// the jumpjet purely so its release path runs. With Lift=0 the player
+		// sees no vertical movement at all -- it is just a clean handback.
+		if (pExt->Magnetron_Handoff && !hold.HandedOff
+			&& !WarheadUsesJumpjet(hold.Warhead))
+		{
+			const bool stopped = pExt->Magnetron_Handoff_OnStopped
+				&& hold.StillFrames >= pExt->Magnetron_Handoff_StoppedFor;
+
+			bool arrived = false;
+			if (pExt->Magnetron_Handoff_OnArrived)
+			{
+				auto const firerCoords = pFirer->GetCoords();
+				const double dx = static_cast<double>(coords.X - firerCoords.X);
+				const double dy = static_cast<double>(coords.Y - firerCoords.Y);
+				const double limit = pExt->Magnetron_Handoff_ArriveRange * 256.0;
+				arrived = (dx * dx + dy * dy) <= (limit * limit);
+			}
+
+			const bool controlled = pExt->Magnetron_Handoff_OnMindControl
+				&& pVictim->MindControlledBy != nullptr;
+
+			if (stopped || arrived || controlled)
+			{
+				hold.HandedOff = true;
+
+				// Re-imbue with the jumpjet. ImbueLocomotor tears down the
+				// victim's existing locomotor and link state first (verified
+				// at 0x710017-0x710297), so calling it mid-hold is safe; it
+				// is also exactly what Phobos does from C++.
+				pFirer->ImbueLocomotor(pVictim, JumpjetLocomotorCLSID);
+
+				if (auto const pILoco = pVictim->Locomotor.GetInterfacePtr())
+				{
+					auto const pJJ = static_cast<JumpjetLocomotionClass*>(pILoco);
+
+					// Lift=0 keeps it invisible; any positive value gives a
+					// visible hop before the drop.
+					pJJ->Height = pExt->Magnetron_Handoff_Lift;
+
+					if (pExt->Magnetron_Handoff_Crash.isset())
+						pJJ->Crash = static_cast<float>(pExt->Magnetron_Handoff_Crash.Get());
+				}
+
+				// Deliberately NOT releasing here: the point is to let the
+				// jumpjet's own release path run, which is the only one that
+				// restores command properly. ReleaseOnStop and MaxHoldTime
+				// stay armed as backstops in case it does not reach it.
+				WeaponDiag::MagnetronLine(
+					stopped ? "handoff:stopped"
+						: arrived ? "handoff:arrived" : "handoff:mindcontrol",
+					pVictim->GetTechnoType()->ID,
+					pFirer->GetTechnoType() ? pFirer->GetTechnoType()->ID : "<none>");
+
+				continue;
+			}
+		}
 
 		const int maxHold = pExt->Magnetron_MaxHoldTime;
 		if (maxHold >= 0 && hold.HeldFrames > maxHold)

@@ -32,6 +32,15 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	this->Magnetron_ReleaseOnStop_Delay.Read(exINI, section, "Magnetron.ReleaseOnStop.Delay");
 	this->Magnetron_MaxHoldTime.Read(exINI, section, "Magnetron.MaxHoldTime");
 
+	this->Magnetron_Handoff.Read(exINI, section, "Magnetron.Handoff");
+	this->Magnetron_Handoff_OnStopped.Read(exINI, section, "Magnetron.Handoff.OnStopped");
+	this->Magnetron_Handoff_OnArrived.Read(exINI, section, "Magnetron.Handoff.OnArrived");
+	this->Magnetron_Handoff_OnMindControl.Read(exINI, section, "Magnetron.Handoff.OnMindControl");
+	this->Magnetron_Handoff_StoppedFor.Read(exINI, section, "Magnetron.Handoff.StoppedFor");
+	this->Magnetron_Handoff_ArriveRange.Read(exINI, section, "Magnetron.Handoff.ArriveRange");
+	this->Magnetron_Handoff_Lift.Read(exINI, section, "Magnetron.Handoff.Lift");
+	this->Magnetron_Handoff_Crash.Read(exINI, section, "Magnetron.Handoff.Crash");
+
 	if (this->HasAnyMagnetron())
 	{
 		// Warn loudly about the one configuration we cannot rescue well: a
@@ -48,6 +57,18 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 			this->Magnetron_ReleaseOnStop ? "yes" : "no",
 			this->Magnetron_ReleaseOnStop_Delay.Get(),
 			this->Magnetron_MaxHoldTime.Get());
+
+		if (this->Magnetron_Handoff)
+		{
+			Debug::Log("[WeaponExt]   handoff=yes (lift=%d%s) on:%s%s%s -- the "
+				"imbued locomotor travels, then the jumpjet performs the "
+				"release.\n",
+				this->Magnetron_Handoff_Lift.Get(),
+				this->Magnetron_Handoff_Lift == 0 ? ", invisible" : "",
+				this->Magnetron_Handoff_OnStopped ? " stopped" : "",
+				this->Magnetron_Handoff_OnArrived ? " arrived" : "",
+				this->Magnetron_Handoff_OnMindControl ? " mindcontrol" : "");
+		}
 	}
 }
 
@@ -66,6 +87,14 @@ void WarheadTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->Magnetron_ReleaseOnStop)
 		.Process(this->Magnetron_ReleaseOnStop_Delay)
 		.Process(this->Magnetron_MaxHoldTime)
+		.Process(this->Magnetron_Handoff)
+		.Process(this->Magnetron_Handoff_OnStopped)
+		.Process(this->Magnetron_Handoff_OnArrived)
+		.Process(this->Magnetron_Handoff_OnMindControl)
+		.Process(this->Magnetron_Handoff_StoppedFor)
+		.Process(this->Magnetron_Handoff_ArriveRange)
+		.Process(this->Magnetron_Handoff_Lift)
+		.Process(this->Magnetron_Handoff_Crash)
 		;
 }
 

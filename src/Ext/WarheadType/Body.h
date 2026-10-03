@@ -55,6 +55,24 @@ public:
 		// without this the victim is paralysed for the rest of the match.
 		Valueable<int> Magnetron_MaxHoldTime;
 
+		// --- handoff: make ANY locomotor usable -------------------------
+		// The jumpjet is the only locomotor in the engine that knows how to
+		// hand control back. So rather than forbidding the other CLSIDs, let
+		// the chosen locomotor do the travelling and then swap to the
+		// jumpjet for the ending -- its own release path then runs, with
+		// correct landing, fall-damage credit and command restoration.
+		//
+		// Lift=0 makes this invisible: no vertical movement, the jumpjet is
+		// used purely as the release mechanism.
+		Valueable<bool> Magnetron_Handoff;
+		Valueable<bool> Magnetron_Handoff_OnStopped;
+		Valueable<bool> Magnetron_Handoff_OnArrived;
+		Valueable<bool> Magnetron_Handoff_OnMindControl;
+		Valueable<int> Magnetron_Handoff_StoppedFor;    // frames of no movement
+		Valueable<double> Magnetron_Handoff_ArriveRange; // cells from the firer
+		Valueable<int> Magnetron_Handoff_Lift;          // leptons; 0 = invisible
+		Nullable<double> Magnetron_Handoff_Crash;       // descent rate on the drop
+
 		ExtData(WarheadTypeClass* OwnerObject) : Extension<WarheadTypeClass>(OwnerObject)
 			, Magnetron_Speed { }
 			, Magnetron_Climb { }
@@ -67,6 +85,14 @@ public:
 			, Magnetron_ReleaseOnStop { false }
 			, Magnetron_ReleaseOnStop_Delay { 45 }
 			, Magnetron_MaxHoldTime { -1 }
+			, Magnetron_Handoff { false }
+			, Magnetron_Handoff_OnStopped { true }
+			, Magnetron_Handoff_OnArrived { true }
+			, Magnetron_Handoff_OnMindControl { true }
+			, Magnetron_Handoff_StoppedFor { 15 }
+			, Magnetron_Handoff_ArriveRange { 2.0 }
+			, Magnetron_Handoff_Lift { 0 }
+			, Magnetron_Handoff_Crash { }
 		{ }
 
 		virtual ~ExtData() = default;
@@ -89,7 +115,7 @@ public:
 		bool HasAnyMagnetron() const
 		{
 			return HasFlightOverrides() || Magnetron_ReleaseOnStop
-				|| Magnetron_MaxHoldTime >= 0;
+				|| Magnetron_MaxHoldTime >= 0 || Magnetron_Handoff;
 		}
 
 	private:
