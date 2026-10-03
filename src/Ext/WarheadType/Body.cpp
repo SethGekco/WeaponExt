@@ -1,4 +1,5 @@
 #include "Body.h"
+#include "../../Magnetron.h"
 
 #include <Utilities/Macro.h>
 #include <Utilities/Debug.h>
@@ -37,8 +38,7 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 		// non-jumpjet Locomotor= has no release code of its own anywhere in
 		// the engine, so the flight overrides below do not apply to it and
 		// only MaxHoldTime/ReleaseOnStop keep the victim from being stuck.
-		const bool isJumpjet = this->OwnerObject()->IsLocomotor
-			&& IsEqualGUID(this->OwnerObject()->Locomotor, JumpjetLocomotorCLSID);
+		const bool isJumpjet = Magnetron::WarheadUsesJumpjet(pThis);
 
 		Debug::Log("[WeaponExt] %s: magnetron overrides%s releaseOnStop=%s(%d) "
 			"maxHold=%d\n",
