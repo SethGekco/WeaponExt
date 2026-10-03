@@ -109,6 +109,30 @@ Magnetron.ReleaseOnStop.Delay=45 ; frames with no fresh beam hit before that
 Magnetron.MaxHoldTime=-1      ; frames; hard ceiling on a hold (-1 = none)
 ```
 
+### Handoff — using any locomotor you like
+
+The jumpjet is the only locomotor that knows how to hand control back. So
+instead of avoiding the other CLSIDs, let your chosen locomotor do the
+travelling and hand off to the jumpjet for the *ending*:
+
+```ini
+Magnetron.Handoff=yes             ; swap to the jumpjet when the job is done
+Magnetron.Handoff.Lift=0          ; leptons. 0 (default) = INVISIBLE: no
+                                  ; vertical movement, the jumpjet is used
+                                  ; purely as the release mechanism
+Magnetron.Handoff.Crash=          ; descent rate for the drop, if lifting
+Magnetron.Handoff.OnStopped=yes   ; victim has stopped moving
+Magnetron.Handoff.StoppedFor=15   ; ...for this many frames
+Magnetron.Handoff.OnArrived=yes   ; victim reached the firer
+Magnetron.Handoff.ArriveRange=2   ; ...within this many cells
+Magnetron.Handoff.OnMindControl=yes ; victim got mind controlled
+```
+
+So `Locomotor={4A582741-…}` (Drive) + `Handoff=yes` gives you: the victim
+drives to your tower under its own wheels, and the instant it stops it is
+released cleanly, with no visible hop. `ReleaseOnStop`/`MaxHoldTime` stay
+armed as backstops.
+
 ⚠ **About non-jumpjet `Locomotor=` values.** Setting `Locomotor=` to Drive,
 Hover, Teleport, Tunnel, Walker, Missile or DropPod *imbues fine* but the
 engine then has **no code anywhere** to release the victim — the
@@ -118,8 +142,9 @@ and `MaxHoldTime` are the safety net and will free them, but the flight
 overrides above do **not** apply, and the victim keeps the swapped locomotor
 afterwards (which may move oddly if it does not suit the unit).
 
-**Recommended:** keep the jumpjet CLSID and shape the behaviour with the tags
-above — `Climb`/`Height`/`Speed` give arcs and lift heights, `Crash` gives
+**Recommended:** either use `Magnetron.Handoff=yes` (above) so the engine's
+release path still runs, or keep the jumpjet CLSID and shape the behaviour
+with the tags — `Climb`/`Height`/`Speed` give arcs and lift heights, `Crash` gives
 landing force. Background: encyclopedia `Magnetron-Locomotor-Imbue.md`.
 
 Log markers: `[WeaponExt][mag N] released <victim> (held by <firer>) -- <why>`,
