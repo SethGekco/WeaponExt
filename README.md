@@ -80,3 +80,46 @@ Notes:
 - Log markers: `[WeaponExt][kill]` per kill, `[WeaponExt][pay N]` per money
   movement, plus one `[WeaponExt] <SECTION>: bounty ...` line at load per
   configured type.
+
+## Magnetron (M1) — quick reference
+
+The Magnetron has no locomotor of its own: the stock warhead imbues the
+**jumpjet** locomotor onto its victim. M1 reuses that rather than replacing
+it, so the engine keeps doing the lift/carry/land *and* the release.
+
+```ini
+[SOMEMAGWARHEAD]              ; the IsLocomotor=yes warhead
+; --- flight tuning. Applies ONLY when Locomotor= is the jumpjet CLSID
+; {92612C46-F71F-11d1-AC9F-006008055BB5} (the stock magnetron value).
+; Unset = keep whatever the victim's own TechnoType provides.
+Magnetron.Speed=              ; integer
+Magnetron.Climb=              ; float — ascent rate
+Magnetron.Crash=              ; float — descent rate, i.e. how hard it lands
+Magnetron.Height=             ; integer — carry altitude
+Magnetron.Accel=              ; float
+Magnetron.Wobbles=            ; float
+Magnetron.Deviation=          ; integer
+Magnetron.TurnRate=           ; integer
+
+; --- letting go. Vanilla has NO beam-stop detection at all, so this is ours.
+Magnetron.ReleaseOnStop=no    ; release when the firer stops targeting the victim
+Magnetron.ReleaseOnStop.Delay=15 ; frames of grace before that counts as "stopped"
+Magnetron.MaxHoldTime=-1      ; frames; hard ceiling on a hold (-1 = none)
+```
+
+⚠ **About non-jumpjet `Locomotor=` values.** Setting `Locomotor=` to Drive,
+Hover, Teleport, Tunnel, Walker, Missile or DropPod *imbues fine* but the
+engine then has **no code anywhere** to release the victim — the
+"give control back" logic lives inside `JumpjetLocomotionClass` alone. Those
+victims are paralysed for the rest of the match in vanilla. `ReleaseOnStop`
+and `MaxHoldTime` are the safety net and will free them, but the flight
+overrides above do **not** apply, and the victim keeps the swapped locomotor
+afterwards (which may move oddly if it does not suit the unit).
+
+**Recommended:** keep the jumpjet CLSID and shape the behaviour with the tags
+above — `Climb`/`Height`/`Speed` give arcs and lift heights, `Crash` gives
+landing force. Background: encyclopedia `Magnetron-Locomotor-Imbue.md`.
+
+Log markers: `[WeaponExt][mag N] released <victim> (held by <firer>) -- <why>`,
+plus one `[WeaponExt] <WARHEAD>: magnetron overrides ...` line per configured
+warhead at load (it states whether flight overrides will apply).
