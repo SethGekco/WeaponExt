@@ -36,6 +36,7 @@ void WarheadTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	this->Magnetron_Handoff_OnStopped.Read(exINI, section, "Magnetron.Handoff.OnStopped");
 	this->Magnetron_Handoff_OnArrived.Read(exINI, section, "Magnetron.Handoff.OnArrived");
 	this->Magnetron_Handoff_OnMindControl.Read(exINI, section, "Magnetron.Handoff.OnMindControl");
+	this->Magnetron_Handoff_MinHoldTime.Read(exINI, section, "Magnetron.Handoff.MinHoldTime");
 	this->Magnetron_Handoff_StoppedFor.Read(exINI, section, "Magnetron.Handoff.StoppedFor");
 	this->Magnetron_Handoff_ArriveRange.Read(exINI, section, "Magnetron.Handoff.ArriveRange");
 	this->Magnetron_Handoff_Lift.Read(exINI, section, "Magnetron.Handoff.Lift");
@@ -91,6 +92,7 @@ void WarheadTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->Magnetron_Handoff_OnStopped)
 		.Process(this->Magnetron_Handoff_OnArrived)
 		.Process(this->Magnetron_Handoff_OnMindControl)
+		.Process(this->Magnetron_Handoff_MinHoldTime)
 		.Process(this->Magnetron_Handoff_StoppedFor)
 		.Process(this->Magnetron_Handoff_ArriveRange)
 		.Process(this->Magnetron_Handoff_Lift)

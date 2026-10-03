@@ -68,6 +68,7 @@ public:
 		Valueable<bool> Magnetron_Handoff_OnStopped;
 		Valueable<bool> Magnetron_Handoff_OnArrived;
 		Valueable<bool> Magnetron_Handoff_OnMindControl;
+		Valueable<int> Magnetron_Handoff_MinHoldTime;   // floor before any handoff
 		Valueable<int> Magnetron_Handoff_StoppedFor;    // frames of no movement
 		Valueable<double> Magnetron_Handoff_ArriveRange; // cells from the firer
 		Valueable<int> Magnetron_Handoff_Lift;          // leptons; 0 = invisible
@@ -89,6 +90,7 @@ public:
 			, Magnetron_Handoff_OnStopped { true }
 			, Magnetron_Handoff_OnArrived { true }
 			, Magnetron_Handoff_OnMindControl { true }
+			, Magnetron_Handoff_MinHoldTime { 30 }
 			, Magnetron_Handoff_StoppedFor { 15 }
 			, Magnetron_Handoff_ArriveRange { 2.0 }
 			, Magnetron_Handoff_Lift { 0 }

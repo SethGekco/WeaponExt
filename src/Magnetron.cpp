@@ -53,6 +53,10 @@ namespace
 		// and a latch so the swap happens exactly once per hold.
 		CoordStruct LastCoords;
 		int StillFrames;
+		// "Stopped" must mean "stopped AFTER travelling", never "has not
+		// started yet" -- see the handoff condition for why that distinction
+		// is the whole feature.
+		bool HasMoved;
 		bool HandedOff;
 	};
 
@@ -241,7 +245,7 @@ void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim)
 	// Flight overrides are deferred to the next PerFrame tick: this runs at
 	// ImbueLocomotor's *entry*, so the new locomotor does not exist yet.
 	Holds[HoldCount++] = Hold { pVictim, pFirer, pWH, 0, 0, true,
-		pVictim->GetCoords(), 0, false };
+		pVictim->GetCoords(), 0, false, false };
 }
 
 void Magnetron::PerFrame()
@@ -297,6 +301,7 @@ void Magnetron::PerFrame()
 		{
 			hold.StillFrames = 0;
 			hold.LastCoords = coords;
+			hold.HasMoved = true;
 		}
 
 		// --- handoff ------------------------------------------------------
@@ -304,10 +309,26 @@ void Magnetron::PerFrame()
 		// usable: let the imbued locomotor do the travelling, then swap to
 		// the jumpjet purely so its release path runs. With Lift=0 the player
 		// sees no vertical movement at all -- it is just a clean handback.
-		if (pExt->Magnetron_Handoff && !hold.HandedOff
-			&& !WarheadUsesJumpjet(hold.Warhead))
+		// A floor on how long the magnetron gets to do its thing before any
+		// handoff may interrupt it. Belt-and-braces alongside HasMoved: a
+		// handoff that fires in the first few frames cancels the effect the
+		// weapon exists to produce.
+		const bool handoffAllowed = pExt->Magnetron_Handoff
+			&& !hold.HandedOff
+			&& hold.HeldFrames >= pExt->Magnetron_Handoff_MinHoldTime
+			&& !WarheadUsesJumpjet(hold.Warhead);
+
+		if (handoffAllowed)
 		{
+			// ⚠ `HasMoved` is load-bearing. Without it the victim is "still"
+			// for the first frames of every grab -- before the imbued
+			// locomotor has begun dragging it anywhere -- so the handoff
+			// fired almost immediately, swapped in an invisible (Lift=0)
+			// jumpjet, and that landed and released at once. The magnetron
+			// then had no visible effect whatsoever, which is exactly how
+			// Rex described it: "doesn't phase units at all".
 			const bool stopped = pExt->Magnetron_Handoff_OnStopped
+				&& hold.HasMoved
 				&& hold.StillFrames >= pExt->Magnetron_Handoff_StoppedFor;
 
 			bool arrived = false;
