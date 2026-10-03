@@ -31,6 +31,11 @@ auras/warheads.
 - Vanilla magnetron: weapon warhead `IsLocomotor=yes` + `Locomotor=` CLSID
   piggybacks a locomotor onto the victim. Alternate CLSIDs mostly freeze the
   victim (see §2 notes from Rex's testing).
+- **M0 RE result (2026-10-10): the magnetron has no locomotor of its own — it
+  imbues the JUMPJET locomotor (`{92612C46-…}`), and the release logic exists
+  only inside `JumpjetLocomotionClass`. The whole subsystem is unhooked by
+  every framework.** Details in §2.3 / encyclopedia
+  `Magnetron-Locomotor-Imbue.md`.
 - No framework implements magnetron customization. Nearby known hooks:
   Phobos `0x4696CE` BulletClass_Detonate_ImbueLocomotor, `0x46954C`
   IsLocomotor bunker fix, PR#352 `0x469672`; droppod loco hooks Phobos
@@ -138,9 +143,13 @@ Bounty.Leech.KillerHouses=owner,allies
 Bounty.Leech.Victims=         ; victim filter, same mixed-list parsing
 Bounty.Leech.VictimHouses=enemies
 ```
-Implementation: our TechnoExt keeps a registry vector of live leech units; the
-kill event iterates it with the range/filters. Range measured from the leech
-unit to the victim's death coordinates.
+**Implemented (B2)** by sweeping `TechnoClass::Array` on each kill rather than
+maintaining a registry of live leech units — a registry would need correct
+cleanup on every death, limbo and ownership change, which is the dangling-
+pointer bug class this project keeps hitting. The sweep is gated behind a
+count of leech-enabled TechnoTypes, so a mod using none pays nothing for it.
+Range is measured from the leech to the victim's death coordinates, and the
+killer is excluded (it already had the direct payout).
 
 ### 1.4 House routing (who pays, who gets)
 ```ini
