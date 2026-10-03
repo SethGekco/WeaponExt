@@ -40,11 +40,14 @@ public:
 		Nullable<int> Magnetron_Deviation;
 		Nullable<int> Magnetron_TurnRate;
 
-		// Release when the firer stops shooting at the victim. Vanilla has NO
-		// beam-stop detection at all -- the jumpjet decides when it is done --
-		// so this is entirely ours.
+		// Release when the beam stops. Vanilla has NO beam-stop detection at
+		// all -- the jumpjet decides when it is done -- so this is ours.
+		// Measured as "frames since the last fresh imbue": every shot
+		// re-imbues, so a gap in imbues IS the beam stopping. (Comparing
+		// firer->Target to the victim does NOT work; a magnetron keeps
+		// targeting what it holds.)
 		Valueable<bool> Magnetron_ReleaseOnStop;
-		Valueable<int> Magnetron_ReleaseOnStop_Delay;   // frames of grace
+		Valueable<int> Magnetron_ReleaseOnStop_Delay;   // frames without a fresh beam hit; MUST exceed the weapon ROF
 
 		// Hard ceiling on how long a victim may be held, in frames. The
 		// safety net for a modder who set `Locomotor=` to a non-jumpjet
@@ -62,7 +65,7 @@ public:
 			, Magnetron_Deviation { }
 			, Magnetron_TurnRate { }
 			, Magnetron_ReleaseOnStop { false }
-			, Magnetron_ReleaseOnStop_Delay { 15 }
+			, Magnetron_ReleaseOnStop_Delay { 45 }
 			, Magnetron_MaxHoldTime { -1 }
 		{ }
 

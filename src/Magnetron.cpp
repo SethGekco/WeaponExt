@@ -43,7 +43,11 @@ namespace
 		TechnoClass* Firer;
 		WarheadTypeClass* Warhead;
 		int HeldFrames;
-		int NotTargetedFrames;
+		// Frames since the beam last hit this victim. The magnetron re-imbues
+		// on every shot, so "no fresh imbue for a while" IS "the beam
+		// stopped" -- see the long comment on the release condition below.
+		int FramesSinceImbue;
+		bool NeedsFlightOverrides;
 	};
 
 	Hold Holds[MaxHolds] = {};
@@ -73,6 +77,66 @@ namespace
 			pVictim ? pVictim->GetTechnoType()->ID : "<none>",
 			pFirer->GetTechnoType() ? pFirer->GetTechnoType()->ID : "<none>");
 	}
+
+	// ImbueLocomotor is handed a bare CLSID, not the warhead that chose it,
+	// so the per-warhead tags have to be found another way. The firer just
+	// fired a locomotor weapon, so we take the first weapon it owns whose
+	// warhead has IsLocomotor=yes. In practice a magnetron has exactly one;
+	// a unit with two different locomotor warheads gets the first, which is
+	// documented rather than guessed at.
+	WarheadTypeClass* FindLocomotorWarhead(TechnoClass* pFirer)
+	{
+		for (int i = 0; i < 18; ++i)
+		{
+			if (auto const pStruct = pFirer->GetWeapon(i))
+			{
+				if (auto const pWeapon = pStruct->WeaponType)
+				{
+					if (auto const pWH = pWeapon->Warhead)
+					{
+						if (pWH->IsLocomotor)
+							return pWH;
+					}
+				}
+			}
+		}
+
+		return nullptr;
+	}
+
+	void ApplyFlightOverrides(FootClass* pVictim, WarheadTypeExt::ExtData* pExt,
+		WarheadTypeClass* pWH)
+	{
+		if (!pExt->HasFlightOverrides() || !Magnetron::WarheadUsesJumpjet(pWH))
+			return;
+
+		auto const pILoco = pVictim->Locomotor.GetInterfacePtr();
+		if (!pILoco)
+			return;
+
+		// static_cast, not reinterpret_cast: LocomotionClass derives from
+		// IPersistStream *then* ILocomotion, so the stored ILocomotion
+		// pointer is offset into the object and the compiler has to apply the
+		// base adjustment. Doing this by hand is how you corrupt a locomotor.
+		auto const pJJ = static_cast<JumpjetLocomotionClass*>(pILoco);
+
+		if (pExt->Magnetron_Speed.isset())
+			pJJ->Speed = pExt->Magnetron_Speed;
+		if (pExt->Magnetron_Climb.isset())
+			pJJ->Climb = static_cast<float>(pExt->Magnetron_Climb.Get());
+		if (pExt->Magnetron_Crash.isset())
+			pJJ->Crash = static_cast<float>(pExt->Magnetron_Crash.Get());
+		if (pExt->Magnetron_Height.isset())
+			pJJ->Height = pExt->Magnetron_Height;
+		if (pExt->Magnetron_Accel.isset())
+			pJJ->Accel = static_cast<float>(pExt->Magnetron_Accel.Get());
+		if (pExt->Magnetron_Wobbles.isset())
+			pJJ->Wobbles = static_cast<float>(pExt->Magnetron_Wobbles.Get());
+		if (pExt->Magnetron_Deviation.isset())
+			pJJ->Deviation = pExt->Magnetron_Deviation;
+		if (pExt->Magnetron_TurnRate.isset())
+			pJJ->TurnRate = pExt->Magnetron_TurnRate;
+	}
 }
 
 bool Magnetron::WarheadUsesJumpjet(WarheadTypeClass* pWH)
@@ -81,61 +145,30 @@ bool Magnetron::WarheadUsesJumpjet(WarheadTypeClass* pWH)
 		&& IsEqualGUID(pWH->Locomotor, JumpjetLocomotorCLSID);
 }
 
-void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim, WarheadTypeClass* pWH)
+void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim)
 {
-	if (!pFirer || !pVictim || !pWH)
+	if (!pFirer || !pVictim)
+		return;
+
+	auto const pWH = FindLocomotorWarhead(pFirer);
+	if (!pWH)
 		return;
 
 	auto const pExt = WarheadTypeExt::ExtMap.Find(pWH);
 	if (!pExt || !pExt->HasAnyMagnetron())
 		return;   // vanilla behaviour, byte for byte
 
-	// --- flight overrides -------------------------------------------------
-	// Only legal when the imbued locomotor really is a jumpjet; see the
-	// WarheadUsesJumpjet comment.
-	if (pExt->HasFlightOverrides() && WarheadUsesJumpjet(pWH))
-	{
-		if (auto const pILoco = pVictim->Locomotor.GetInterfacePtr())
-		{
-			// static_cast, not reinterpret_cast: LocomotionClass derives from
-			// IPersistStream *then* ILocomotion, so the stored ILocomotion
-			// pointer is offset into the object and the compiler has to apply
-			// the base adjustment. Doing this by hand is how you corrupt a
-			// locomotor.
-			auto const pJJ = static_cast<JumpjetLocomotionClass*>(pILoco);
-
-			if (pExt->Magnetron_Speed.isset())
-				pJJ->Speed = pExt->Magnetron_Speed;
-			if (pExt->Magnetron_Climb.isset())
-				pJJ->Climb = static_cast<float>(pExt->Magnetron_Climb.Get());
-			if (pExt->Magnetron_Crash.isset())
-				pJJ->Crash = static_cast<float>(pExt->Magnetron_Crash.Get());
-			if (pExt->Magnetron_Height.isset())
-				pJJ->Height = pExt->Magnetron_Height;
-			if (pExt->Magnetron_Accel.isset())
-				pJJ->Accel = static_cast<float>(pExt->Magnetron_Accel.Get());
-			if (pExt->Magnetron_Wobbles.isset())
-				pJJ->Wobbles = static_cast<float>(pExt->Magnetron_Wobbles.Get());
-			if (pExt->Magnetron_Deviation.isset())
-				pJJ->Deviation = pExt->Magnetron_Deviation;
-			if (pExt->Magnetron_TurnRate.isset())
-				pJJ->TurnRate = pExt->Magnetron_TurnRate;
-		}
-	}
-
-	// --- register the hold ------------------------------------------------
-	if (!pExt->Magnetron_ReleaseOnStop && pExt->Magnetron_MaxHoldTime < 0)
-		return;   // nothing to supervise
-
-	// Re-arm an existing entry rather than duplicating it: the same magnetron
-	// re-grabbing the same victim is normal (one imbue per shot).
+	// Re-arm an existing entry rather than duplicating it: re-grabbing the
+	// same victim every shot is exactly how a magnetron holds something, and
+	// resetting FramesSinceImbue here is what makes "the beam is still on
+	// it" observable at all.
 	for (int i = 0; i < HoldCount; ++i)
 	{
 		if (Holds[i].Victim == pVictim)
 		{
 			Holds[i].Firer = pFirer;
 			Holds[i].Warhead = pWH;
-			Holds[i].NotTargetedFrames = 0;
+			Holds[i].FramesSinceImbue = 0;
 			return;
 		}
 	}
@@ -152,7 +185,9 @@ void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim, WarheadTypeCla
 		return;
 	}
 
-	Holds[HoldCount++] = Hold { pVictim, pFirer, pWH, 0, 0 };
+	// Flight overrides are deferred to the next PerFrame tick: this runs at
+	// ImbueLocomotor's *entry*, so the new locomotor does not exist yet.
+	Holds[HoldCount++] = Hold { pVictim, pFirer, pWH, 0, 0, true };
 }
 
 void Magnetron::PerFrame()
@@ -187,7 +222,15 @@ void Magnetron::PerFrame()
 			continue;
 		}
 
+		// Apply the deferred flight overrides now that the locomotor exists.
+		if (hold.NeedsFlightOverrides)
+		{
+			hold.NeedsFlightOverrides = false;
+			ApplyFlightOverrides(pVictim, pExt, hold.Warhead);
+		}
+
 		++hold.HeldFrames;
+		++hold.FramesSinceImbue;
 
 		const int maxHold = pExt->Magnetron_MaxHoldTime;
 		if (maxHold >= 0 && hold.HeldFrames > maxHold)
@@ -199,15 +242,18 @@ void Magnetron::PerFrame()
 
 		if (pExt->Magnetron_ReleaseOnStop)
 		{
-			// "Still firing at it" == the firer is still targeting it. A
-			// grace window avoids dropping the victim on a one-frame
-			// retarget blip.
-			if (pFirer->Target == pVictim)
-				hold.NotTargetedFrames = 0;
-			else
-				++hold.NotTargetedFrames;
-
-			if (hold.NotTargetedFrames > pExt->Magnetron_ReleaseOnStop_Delay)
+			// ⚠ The signal is "no fresh imbue recently", NOT "the firer
+			// stopped targeting it". The first version compared
+			// `pFirer->Target == pVictim` and never fired: a magnetron goes
+			// on targeting the unit it is holding, so the condition stayed
+			// false forever.
+			//
+			// Every shot re-imbues, so the beam IS the stream of imbues.
+			// Delay therefore has to exceed the weapon's ROF or the victim
+			// gets dropped between shots -- which is why the default is 45
+			// rather than the 15 it shipped with (ROF=20 is common and would
+			// have thrashed).
+			if (hold.FramesSinceImbue > pExt->Magnetron_ReleaseOnStop_Delay)
 			{
 				DoRelease(pFirer, pVictim, "beam-stopped");
 				Forget(i);

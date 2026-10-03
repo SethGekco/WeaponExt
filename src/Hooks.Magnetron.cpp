@@ -3,35 +3,40 @@
 #include <TechnoClass.h>
 // TechnoClass.h -> Helpers/Cast.h needs FootClass complete.
 #include <FootClass.h>
-#include <BulletClass.h>
 
 #include <Utilities/Macro.h>
 
 // ---------------------------------------------------------------------------
-// The post-imbue seat: 0x469700, the instruction immediately after
-// `call TechnoClass::ImbueLocomotor` (0x4696FB) in BulletClass::Logics.
+// The imbue funnel: `TechnoClass::ImbueLocomotor` itself, at its entry.
 //
-// ⚠ The stolen bytes here are `E9 9F 03 00 00` -- a 5-byte RELATIVE jmp to
-// 0x469AA4. Returning 0 would make Syringe's trampoline re-execute an
-// un-relocated branch and jump into garbage; that is the documented crash in
-// the Encyclopedia's Target-Evaluation-Threat.md / Syringe-Stub-Semantics.md.
-// So this handler replicates the jump by returning the destination
-// explicitly, and must NEVER `return 0`.
+// ⚠ WHY NOT THE BULLET PATH. The first version of this hooked 0x469700, the
+// instruction right after the vanilla `call ImbueLocomotor` in
+// BulletClass::Logics. It never ran once. **Phobos's handler at 0x4696CE is a
+// FULL REPLACEMENT**: it calls `ImbueLocomotor` itself from C++ and then
+// `return 0x469AA4`, jumping clean past 0x4696FB and 0x469700. The seat was
+// legal (no registry overlap, perfect geometry) but dead -- exactly the
+// "legal is not live" / full-replacement trap in _TRAPS-READ-FIRST.md, and
+// invisible to the overlap and bounds checkers.
 //
-// Register state verified by disassembly: ImbueLocomotor's epilogue at
-// 0x710405 pops edi/esi/ebp/ebx, so the caller's registers survive the call.
-// ESI = the bullet (set long before), EDI = the victim FootClass* (loaded at
-// 0x469648). The firer is bullet->Owner, the warhead is bullet->WH.
+// The function entry is the one place BOTH paths must pass through: vanilla's
+// single call site and Phobos's C++ call. Stolen bytes are
+// `83 EC 1C | 53 | 55` -- sub esp,0x1c + push ebx + push ebp, exactly 5, one
+// whole instruction each and no relative branch, so `return 0` is safe.
+//
+// At the entry, nothing has been pushed yet: ECX = the firer (thiscall) and
+// [esp+0x4] = the victim argument. The CLSID argument is NOT read here -- we
+// get the locomotor identity from the warhead instead, which is equivalent
+// and simpler.
 // ---------------------------------------------------------------------------
-DEFINE_HOOK(0x469700, BulletClass_Logics_MagnetronImbued, 0x5)
+DEFINE_HOOK(0x710000, TechnoClass_ImbueLocomotor_Magnetron, 0x5)
 {
-	GET(BulletClass* const, pBullet, ESI);
-	GET(FootClass* const, pVictim, EDI);
+	GET(TechnoClass* const, pFirer, ECX);
+	GET_STACK(FootClass* const, pVictim, 0x4);
 
-	if (pBullet && pVictim)
-		Magnetron::OnImbued(pBullet->Owner, pVictim, pBullet->WH);
+	if (pFirer && pVictim)
+		Magnetron::OnImbued(pFirer, pVictim);
 
-	return 0x469AA4;   // replicate the stolen jmp; never 0
+	return 0;
 }
 
 // ---------------------------------------------------------------------------

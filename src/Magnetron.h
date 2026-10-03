@@ -38,10 +38,15 @@ namespace Magnetron
 	// scribble over unrelated members.
 	bool WarheadUsesJumpjet(WarheadTypeClass* pWH);
 
-	// Called immediately after the engine's ImbueLocomotor returns: applies
-	// the warhead's flight overrides and registers the hold so PerFrame can
-	// decide when to let go.
-	void OnImbued(TechnoClass* pFirer, FootClass* pVictim, WarheadTypeClass* pWH);
+	// Called at the ENTRY of TechnoClass::ImbueLocomotor -- the one funnel
+	// both the vanilla call site and Phobos's full-replacement C++ call pass
+	// through. Registers the hold; the flight overrides are applied on the
+	// next PerFrame tick, by which point the new locomotor exists.
+	//
+	// The warhead is not an argument: ImbueLocomotor only receives a CLSID.
+	// It is resolved from the firer's own weapons instead -- see
+	// FindLocomotorWarhead in the .cpp.
+	void OnImbued(TechnoClass* pFirer, FootClass* pVictim);
 
 	// Per-frame: releases victims whose beam has stopped or whose hold has
 	// outlived Magnetron.MaxHoldTime. Cheap when idle (no active holds).

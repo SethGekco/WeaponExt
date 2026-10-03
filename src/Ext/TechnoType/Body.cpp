@@ -118,6 +118,20 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	this->Bounty_Leech_Victims.Read(pINI, section, "Bounty.Leech.Victims");
 	this->Bounty_Leech_VictimHouses.Read(exINI, section, "Bounty.Leech.VictimHouses");
 
+	// The single most likely reason a correctly-written leech/hunter pays
+	// nothing: the VICTIMS are worth nothing. Say so at load rather than
+	// letting it look like the feature is broken.
+	if ((this->Bounty_Leech || this->Bounty_Hunter)
+		&& Bounty::DefaultValue() == 0
+		&& Bounty::DefaultCostRatio() == 0.0
+		&& Bounty::DefaultSoylentRatio() == 0.0)
+	{
+		Debug::Log("[WeaponExt] %s: bounty is enabled here, but [General] sets "
+			"no Bounty.Value/CostRatio/SoylentRatio, so unless each victim "
+			"defines its own value every payout computes to 0. Add e.g. "
+			"`[General] Bounty.CostRatio=1.0`.\n", section);
+	}
+
 	if (this->HasAnyBounty())
 	{
 		Debug::Log("[WeaponExt] %s: bounty value=%d cost*%.2f soylent*%.2f "
