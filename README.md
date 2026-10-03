@@ -21,9 +21,11 @@ with `--recurse-submodules`.
 
 ## Compatibility notes
 
-- Our probe co-hooks Antares' bounty address `0x702E64` at the same size;
-  both handlers return 0 so the Syringe chain runs both. Our future bounty
-  system enables via `Bounty.Hunter=`, deliberately NOT Antares' `Bounty=`.
+- We co-hook Antares' bounty address `0x702E64` at the same size; both
+  handlers return 0 so the Syringe chain runs both. Our payout enables via
+  `Bounty.Hunter=`, deliberately NOT Antares' `Bounty=`, so running both
+  systems is an explicit opt-in rather than an accident. The victim-side
+  `Bounty.Value=` key IS shared with Antares on purpose.
 - `0x702E6A` is left untouched: Phobos PR#2118 ("New bounty logic", open)
   owns it. Loading a Phobos build containing that PR alongside our bounty
   system will run two bounty systems; pick one.
