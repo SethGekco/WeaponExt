@@ -7,6 +7,7 @@
 #include <FootClass.h>
 #include <WarheadTypeClass.h>
 #include <JumpjetLocomotionClass.h>
+#include <LocomotionClass.h>
 
 #include <Ext/WarheadType/Body.h>
 
@@ -95,6 +96,31 @@ namespace
 
 		if (forceUnjam && pVictim)
 		{
+			// ⚠ THE ACTUAL FIX, and a correction to M0.
+			//
+			// The magnetron does not overwrite the victim's locomotor -- it
+			// **piggybacks**. `LocomotionClass::ChangeLocomotorTo` (YRpp,
+			// "Magnetron style") keeps the original alive *inside* the new
+			// locomotor via `IPiggyback::Begin_Piggyback`. M0 read the
+			// Release() at 0x7102F6 as the original being destroyed; it is
+			// only the smart pointer dropping its own reference after
+			// Begin_Piggyback took ownership. The original survives.
+			//
+			// `IPiggyback::Is_Ok_To_End` is documented as being honoured
+			// automatically in FootClass::AI -- for the jumpjet that goes
+			// true once it has landed, which is how vanilla hands control
+			// back. For Drive/Teleport/etc. it never does, so the piggyback
+			// never ends and the unit keeps running a locomotor that is not
+			// its own. Clearing the jam bools alone was not enough precisely
+			// because of this: the victim was unflagged but still driven by
+			// the imbued locomotor.
+			//
+			// End_Piggyback restores the original and ignores Is_Ok_To_End,
+			// which is exactly what we want. Same call Phobos uses in
+			// Ext/WarheadType/Detonate.cpp, so it is safe under this
+			// project's HAS_EXCEPTIONS=0 build.
+			LocomotionClass::End_Piggyback(pVictim->Locomotor);
+
 			pVictim->IsAttackedByLocomotor = false;
 			pVictim->IsLetGoByLocomotor = false;
 		}

@@ -82,7 +82,7 @@ void WeaponDiag::MagnetronLine(const char* why, const char* victim,
 	Debug::Log("[WeaponExt][mag %3d] released %s (held by %s) -- %s%s\n",
 		MagnetronCount, victim ? victim : "?", firer ? firer : "?",
 		why ? why : "?",
-		forcedUnjam ? " [unjammed: cleared IsAttackedByLocomotor]" : "");
+		forcedUnjam ? " [restored: ended piggyback + cleared jam bools]" : "");
 }
 
 bool WeaponDiag::ShouldLog()
