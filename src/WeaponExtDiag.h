@@ -19,4 +19,12 @@ namespace WeaponDiag
 	// Kill events are far rarer than shots, but a long comp-stomp still
 	// produces thousands; cap the log so a soak test can't flood debug.log.
 	bool ShouldLog();
+
+	// One line per actual money movement. Separately budgeted from the kill
+	// log: a single kill can pay many houses (allies, death rewards, and one
+	// line per leeching object), so sharing the kill budget would let one
+	// busy frame hide every later payout. Lesson from ScatterExt's four
+	// budget iterations -- the states you care about must stay distinguishable.
+	void PayoutLine(const char* reason, const char* earner,
+		const char* paidHouse, int amount);
 }

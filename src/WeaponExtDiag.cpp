@@ -8,6 +8,10 @@ namespace
 	int KillCount = 0;
 	bool BudgetAnnounced = false;
 
+	constexpr int PayoutLogLimit = 600;
+	int PayoutCount = 0;
+	bool PayoutBudgetAnnounced = false;
+
 	bool RanExeRun = false;
 	bool RanExeRunAlt = false;
 
@@ -31,6 +35,27 @@ void WeaponDiag::ReportOnce()
 		RanExeRun ? "RAN" : "DID NOT RUN",
 		RanExeRunAlt ? "RAN" : "DID NOT RUN");
 	Debug::Log("[WeaponExt]   kill-log budget: %d events.\n", KillLogLimit);
+}
+
+void WeaponDiag::PayoutLine(const char* reason, const char* earner,
+	const char* paidHouse, int amount)
+{
+	if (PayoutCount >= PayoutLogLimit)
+	{
+		if (!PayoutBudgetAnnounced)
+		{
+			PayoutBudgetAnnounced = true;
+			Debug::Log("[WeaponExt] Payout-log budget reached (%d).\n",
+				PayoutLogLimit);
+		}
+		return;
+	}
+
+	++PayoutCount;
+
+	Debug::Log("[WeaponExt][pay %3d] %s: %s -> %s %+d\n",
+		PayoutCount, reason ? reason : "?", earner ? earner : "?",
+		paidHouse ? paidHouse : "?", amount);
 }
 
 bool WeaponDiag::ShouldLog()
