@@ -563,6 +563,32 @@ every read; blacklist entries die with the target.
   objects whose locomotor CLSID is TAExt's private one; degrade to Switch.
   No TAExt loaded → the check never matches → no cost.
 
+### 6.1.3 Fire-once weapons (the drone-escort ask)
+Rex's case: a spawner weapon that fires **once** and then stops, so launched
+drones go and follow a unit instead of being re-launched forever.
+
+This is unusually cheap for us because **we already own the rearm-timer store**
+(`0x6FF29E`, the ROF-by-range seat: `mov [esi+0x2f8], eax`). "Fire once, then
+stop" is just "write a very large rearm delay after the first shot" — no new
+hook, no fire-veto, no targeting surgery.
+```ini
+[TECHNOTYPE]                      ; per-slot, same prefixes as §6.1
+Primary.FireOnce=no
+Primary.FireOnce.Shots=1          ; shots allowed per "arming"
+Primary.FireOnce.ResetOn=target   ; target    = re-arm when the target changes
+                                  ; targetlost= re-arm when the target dies/escapes
+                                  ; time      = re-arm after .ResetTime frames
+                                  ; never     = one burst per unit lifetime
+Primary.FireOnce.ResetTime=900
+```
+Interaction note: for the drone-escort case the *pursuit* behaviour after
+launch is Phobos's `Spawner.LimitRange` / `Spawner.ExtraLimitRange` territory,
+not ours — we only stop the re-launch. Worth documenting together so the
+combination is discoverable.
+
+State lives on the same per-slot TechnoExt record as §6.1's failure counters,
+so F1 and this land together naturally.
+
 ### 6.2 Scatter modifiers as timed effects (the "AE support" ask)
 Same pattern as BountyBonus/RadField profiles: warhead-applied **timed
 InaccuracyModifier** on our own ext (`InaccuracyModifier.Attach=`,
@@ -832,7 +858,7 @@ same warhead sections is fine as long as the key prefixes stay distinct.
 | R3 | Smooth-circle renderer + condition profiles (Requirement reuse) |
 | S1 | ~~ScatterExt merge~~ **DONE 2026-09-15** (CI green, deployed, ScatterExt de-listed) |
 | S2 | Observe the pending ScatterExt features in-game (staged rulesmd config); §20 distribution |
-| F1 | Failure tracking: detection tiers, counters, Blacklist/Switch/Stalk/Correct |
+| F1 | Failure tracking: detection tiers, counters, Blacklist/Switch/Stalk/Correct; FireOnce (§6.1.3, shares the per-slot state + the 0x6FF29E seat) |
 | F2 | FailureWeapon override + scatter adjusts; Failure.AttachEffect warhead; Reposition |
 | SM1 | Missile.Scatter (destination draw at launch) |
 | SM2 | DynamicLocking + IntervalLimit + TimeoutBehavior; CanTargetAir |

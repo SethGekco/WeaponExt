@@ -29,3 +29,52 @@ with `--recurse-submodules`.
   system will run two bounty systems; pick one.
 - The DLL does nothing until added to the Syringe `-i=` list in wine-game.sh
   and to ClientDefinitions.ini.
+
+## Bounty (B1 + B2) — quick reference
+
+Nothing pays out until some TechnoType opts in. Amounts come from the victim;
+the earner decides whether it collects.
+
+```ini
+[General]                     ; mod-wide fallbacks (a type's own value wins)
+Bounty.Value=0
+Bounty.CostRatio=0.0          ; e.g. 1.0 => every kill is worth victim Cost=
+Bounty.SoylentRatio=0.0
+
+[SOMEVICTIM]
+Bounty.Value=100              ; same key Antares reads, deliberately
+Bounty.Value.Veteran=
+Bounty.Value.Elite=
+Bounty.CostRatio=
+Bounty.SoylentRatio=          ; note: most buildings leave Soylent=0
+Bounty.DeathReward=0          ; paid when THIS dies, regardless of killer
+Bounty.DeathReward.Houses=owner
+
+[SOMEHUNTER]
+Bounty.Hunter=yes             ; the opt-in. NOT Antares' `Bounty=`
+Bounty.Ratio=1.0
+Bounty.Victims=               ; blank/all = everything. Mixed list:
+                              ;   VehicleTypes,InfantryTypes,BuildingTypes,
+                              ;   AircraftTypes, plus literal IDs (E1,MTNK)
+                              ;   `none` disables. Unknown IDs are LOGGED.
+Bounty.VictimHouses=enemies   ; owner|allies|enemies|team|all
+Bounty.Receiver=killer        ; killer|victimHouse|killerAllies|none
+Bounty.Payer=none             ; none|killer|victim  (payer loses the money)
+
+[SOMELEECH]                   ; earns from kills it did not make
+Bounty.Leech=yes
+Bounty.Leech.Range=-1         ; cells; -1 = whole map
+Bounty.Leech.Ratio=0.25
+Bounty.Leech.Killers=         ; blank/all = any killer
+Bounty.Leech.KillerHouses=all
+Bounty.Leech.Victims=
+Bounty.Leech.VictimHouses=enemies
+```
+
+Notes:
+- **`enemies` includes the Neutral/civilian house** (anything not owner/ally).
+- The killer never leeches its own kill; it already had the direct payout.
+- Limboed objects (cargo inside a transport) do not leech.
+- Log markers: `[WeaponExt][kill]` per kill, `[WeaponExt][pay N]` per money
+  movement, plus one `[WeaponExt] <SECTION>: bounty ...` line at load per
+  configured type.
