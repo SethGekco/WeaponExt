@@ -30,5 +30,6 @@ namespace WeaponDiag
 
 	// Magnetron releases. Separately budgeted again: these are rare but a
 	// stuck-victim bug shows up as a FLOOD, so the cap has to be its own.
-	void MagnetronLine(const char* why, const char* victim, const char* firer);
+	void MagnetronLine(const char* why, const char* victim, const char* firer,
+		bool forcedUnjam = false);
 }

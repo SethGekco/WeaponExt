@@ -71,16 +71,38 @@ namespace
 	// (ECX = firer); it clears the victim's LocomotorSource, sets the
 	// BeingManipulatedBy / ChronoWarpedByHouse fall-kill credit, and clears
 	// the firer's LocomotorTarget.
-	void DoRelease(TechnoClass* pFirer, FootClass* pVictim, const char* why)
+	// `forceUnjam` matters more than the release itself.
+	//
+	// ⚠ ReleaseLocomotor does NOT clear FootClass::IsAttackedByLocomotor
+	// (+0x6AD) -- verified by disassembly, it only ever writes +0x6AE. That
+	// flag is what marks a unit "jammed by a magnetron", so releasing the
+	// link while it stays set leaves the victim free of its captor and still
+	// completely uncontrollable. (This was the remaining half of Rex's bug:
+	// the log showed releases happening while the tanks stayed frozen.)
+	//
+	// The jumpjet clears it later, as part of its landing sequence, and it
+	// clears BOTH flags together -- 0x54DA83 / 0x54DA8C, with BL = 0. Any
+	// other locomotor never clears it at all, so for those we have to mirror
+	// that teardown ourselves. For a real jumpjet we leave it alone and let
+	// vanilla's landing machinery finish the job.
+	void DoRelease(TechnoClass* pFirer, FootClass* pVictim, const char* why,
+		bool forceUnjam)
 	{
 		if (!pFirer)
 			return;
 
 		pFirer->ReleaseLocomotor(true);
 
+		if (forceUnjam && pVictim)
+		{
+			pVictim->IsAttackedByLocomotor = false;
+			pVictim->IsLetGoByLocomotor = false;
+		}
+
 		WeaponDiag::MagnetronLine(why,
 			pVictim ? pVictim->GetTechnoType()->ID : "<none>",
-			pFirer->GetTechnoType() ? pFirer->GetTechnoType()->ID : "<none>");
+			pFirer->GetTechnoType() ? pFirer->GetTechnoType()->ID : "<none>",
+			forceUnjam);
 	}
 
 	// ImbueLocomotor is handed a bare CLSID, not the warhead that chose it,
@@ -314,7 +336,11 @@ void Magnetron::PerFrame()
 		const int maxHold = pExt->Magnetron_MaxHoldTime;
 		if (maxHold >= 0 && hold.HeldFrames > maxHold)
 		{
-			DoRelease(pFirer, pVictim, "max-hold");
+			// Last resort by definition: ALWAYS unjam here, even after a
+			// handoff. If we have reached MaxHoldTime then whatever was
+			// supposed to land and clear the flag did not, and leaving a unit
+			// permanently frozen is the one outcome worth ruling out.
+			DoRelease(pFirer, pVictim, "max-hold", true);
 			Forget(i);
 			continue;
 		}
@@ -334,7 +360,8 @@ void Magnetron::PerFrame()
 			// have thrashed).
 			if (hold.FramesSinceImbue > pExt->Magnetron_ReleaseOnStop_Delay)
 			{
-				DoRelease(pFirer, pVictim, "beam-stopped");
+				DoRelease(pFirer, pVictim, "beam-stopped",
+					!hold.HandedOff && !WarheadUsesJumpjet(hold.Warhead));
 				Forget(i);
 				continue;
 			}

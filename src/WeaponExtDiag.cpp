@@ -63,7 +63,7 @@ void WeaponDiag::PayoutLine(const char* reason, const char* earner,
 }
 
 void WeaponDiag::MagnetronLine(const char* why, const char* victim,
-	const char* firer)
+	const char* firer, bool forcedUnjam)
 {
 	if (MagnetronCount >= MagnetronLogLimit)
 	{
@@ -78,9 +78,10 @@ void WeaponDiag::MagnetronLine(const char* why, const char* victim,
 
 	++MagnetronCount;
 
-	Debug::Log("[WeaponExt][mag %3d] released %s (held by %s) -- %s\n",
+	Debug::Log("[WeaponExt][mag %3d] released %s (held by %s) -- %s%s\n",
 		MagnetronCount, victim ? victim : "?", firer ? firer : "?",
-		why ? why : "?");
+		why ? why : "?",
+		forcedUnjam ? " [unjammed: cleared IsAttackedByLocomotor]" : "");
 }
 
 bool WeaponDiag::ShouldLog()
