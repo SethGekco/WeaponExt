@@ -42,6 +42,9 @@ the earner decides whether it collects.
 Bounty.Value=0
 Bounty.CostRatio=0.0          ; e.g. 1.0 => every kill is worth victim Cost=
 Bounty.SoylentRatio=0.0
+Bounty.Display=yes            ; the "+$25" flying text over the corpse.
+                              ; Shown ONLY to the house that earned it, so if
+                              ; no text appears, you were not the one paid.
 
 [SOMEVICTIM]
 Bounty.Value=100              ; same key Antares reads, deliberately
@@ -80,6 +83,11 @@ Notes:
 - Log markers: `[WeaponExt][kill]` per kill, `[WeaponExt][pay N]` per money
   movement, plus one `[WeaponExt] <SECTION>: bounty ...` line at load per
   configured type.
+- The payout line names the recipient unambiguously —
+  `leech: YASCRP -> YuriCountry(house 3) [YOU] +25`. The country name alone is
+  not enough: two players can share a country in one match, so the house
+  **array index** and the `[YOU]` marker are what tell you whether the money
+  reached you or an AI running the same country.
 
 ## Magnetron (M1) — quick reference
 
