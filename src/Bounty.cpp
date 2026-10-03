@@ -13,6 +13,7 @@
 #include <CCINIClass.h>
 
 #include <Ext/TechnoType/Body.h>
+#include <Misc/FlyingStrings.h>
 
 #include <Utilities/Debug.h>
 
@@ -30,6 +31,13 @@ namespace
 	int DefaultBountyValue = 0;
 	double DefaultBountyCostRatio = 0.0;
 	double DefaultBountySoylentRatio = 0.0;
+	bool BountyDisplay = true;
+
+	// Where the flying text goes, and what object it is anchored to. Set once
+	// per kill event so PayHouse does not need them threaded through every
+	// call -- there is exactly one victim per event.
+	CoordStruct DisplayCoords {};
+	ObjectClass* DisplaySource = nullptr;
 
 	TechnoTypeClass* FindTechnoType(const char* pID)
 	{
@@ -51,8 +59,23 @@ namespace
 			return;
 
 		pHouse->TransactMoney(amount);
+
+		// The familiar "+$25" over the corpse. Shown only to the house that
+		// earned it (AffectedHouse::Owner compares against CurrentPlayer
+		// inside AddMoneyString), so you see your own income and not the
+		// AI's. FlyingStrings also suppresses it under shroud/fog for free.
+		if (BountyDisplay)
+		{
+			FlyingStrings::AddMoneyString(amount, DisplaySource, pHouse,
+				AffectedHouse::Owner, DisplayCoords);
+		}
+
+		// The log keeps the house ARRAY INDEX as well as the country name:
+		// two players can share a country (two Yuris in one match), and the
+		// name alone cannot tell you which one got paid.
 		WeaponDiag::PayoutLine(reason, earner,
-			pHouse->Type ? pHouse->Type->ID : "<none>", amount);
+			pHouse->Type ? pHouse->Type->ID : "<none>", amount,
+			pHouse->ArrayIndex, pHouse == HouseClass::CurrentPlayer);
 	}
 }
 
@@ -140,7 +163,10 @@ void Bounty::ReadDefaults(CCINIClass* pINI)
 		DefaultBountyCostRatio);
 	DefaultBountySoylentRatio = pINI->ReadDouble("General", "Bounty.SoylentRatio",
 		DefaultBountySoylentRatio);
+	BountyDisplay = pINI->ReadBool("General", "Bounty.Display", BountyDisplay);
 }
+
+bool Bounty::DisplayEnabled() { return BountyDisplay; }
 
 int Bounty::DefaultValue() { return DefaultBountyValue; }
 double Bounty::DefaultCostRatio() { return DefaultBountyCostRatio; }
@@ -193,6 +219,10 @@ void Bounty::OnKill(TechnoClass* pKiller, TechnoClass* pVictim)
 		return;
 
 	auto const pVictimHouse = pVictim->Owner;
+
+	// Anchor the flying text on the victim, where players expect it.
+	DisplayCoords = pVictim->GetCoords();
+	DisplaySource = pVictim;
 
 	// The base amount is a property of the victim: a flat value (rank-aware)
 	// plus optional ratios of its Cost and Soylent. The three components sum.

@@ -42,7 +42,7 @@ void WeaponDiag::ReportOnce()
 }
 
 void WeaponDiag::PayoutLine(const char* reason, const char* earner,
-	const char* paidHouse, int amount)
+	const char* paidHouse, int amount, int houseIndex, bool isCurrentPlayer)
 {
 	if (PayoutCount >= PayoutLogLimit)
 	{
@@ -57,9 +57,10 @@ void WeaponDiag::PayoutLine(const char* reason, const char* earner,
 
 	++PayoutCount;
 
-	Debug::Log("[WeaponExt][pay %3d] %s: %s -> %s %+d\n",
+	Debug::Log("[WeaponExt][pay %3d] %s: %s -> %s(house %d)%s %+d\n",
 		PayoutCount, reason ? reason : "?", earner ? earner : "?",
-		paidHouse ? paidHouse : "?", amount);
+		paidHouse ? paidHouse : "?", houseIndex,
+		isCurrentPlayer ? " [YOU]" : "", amount);
 }
 
 void WeaponDiag::MagnetronLine(const char* why, const char* victim,

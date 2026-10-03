@@ -152,6 +152,12 @@ namespace Bounty
 	double DefaultCostRatio();
 	double DefaultSoylentRatio();
 
+	// `[General] Bounty.Display=yes` (the default) renders the familiar
+	// "+$25" flying text over the victim, shown to whichever house earned the
+	// money. Without it a working payout is invisible, which reads exactly
+	// like a broken one -- that is how this shipped the first time.
+	bool DisplayEnabled();
+
 	// Maintains the "does any type use leeching" fast path. Called with the
 	// old and new value whenever a type's Bounty.Leech is (re)assigned, so it
 	// stays correct across the multi-pass destructive INI reparse documented

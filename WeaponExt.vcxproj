@@ -29,6 +29,10 @@
     <ClCompile Include="Phobos\src\Utilities\Debug.cpp" />
     <ClCompile Include="Phobos\src\Utilities\Stream.cpp" />
     <ClCompile Include="Phobos\src\Utilities\Patch.cpp" />
+    <!-- Phobos helpers we reuse: the bounty money text renderer + its deps -->
+    <ClCompile Include="Phobos\src\Utilities\EnumFunctions.cpp" />
+    <ClCompile Include="Phobos\src\Phobos.CRT.cpp" />
+    <ClCompile Include="Phobos\src\Misc\FlyingStrings.cpp" />
     <!-- P0: bounty probe -->
     <ClCompile Include="src\Hooks.Bounty.cpp" />
     <ClCompile Include="src\Bounty.cpp" />

@@ -26,7 +26,8 @@ namespace WeaponDiag
 	// busy frame hide every later payout. Lesson from ScatterExt's four
 	// budget iterations -- the states you care about must stay distinguishable.
 	void PayoutLine(const char* reason, const char* earner,
-		const char* paidHouse, int amount);
+		const char* paidHouse, int amount, int houseIndex = -1,
+		bool isCurrentPlayer = false);
 
 	// Magnetron releases. Separately budgeted again: these are rare but a
 	// stuck-victim bug shows up as a FLOOD, so the cap has to be its own.

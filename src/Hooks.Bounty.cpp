@@ -1,6 +1,8 @@
 #include "WeaponExtDiag.h"
 #include "Bounty.h"
 
+#include <Misc/FlyingStrings.h>
+
 #include <TechnoClass.h>
 // Required even though FootClass is never named here: TechnoClass.h pulls in
 // Helpers/Cast.h, which instantiates generic_cast<const FootClass*>.
@@ -68,6 +70,26 @@ DEFINE_HOOK(0x702E64, WeaponExt_RegisterDestruction_Bounty, 0x6)
 	}
 
 	Bounty::OnKill(pKiller, pVictim);
+
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Render the money strings. Co-hooks TacticalClass::Draw at 0x6D4684, which
+// BOTH Antares and Phobos already hook at this same size, each returning 0 --
+// so chaining here is the established pattern rather than a gamble.
+//
+// We need our own call because the FlyingStrings statics compiled into this
+// DLL are a separate instance from Phobos.dll's: its UpdateAll drains its
+// queue, not ours. Keeping our own copy is the usual co-loaded-ext rule --
+// never share mutable state with another framework's DLL.
+//
+// This is a draw-phase seat on purpose: UpdateAll writes to DSurface::Temp,
+// so calling it from a logic-phase hook would draw nothing.
+// ---------------------------------------------------------------------------
+DEFINE_HOOK(0x6D4684, TacticalClass_Draw_WeaponExtFlyingStrings, 0x6)
+{
+	FlyingStrings::UpdateAll();
 
 	return 0;
 }
