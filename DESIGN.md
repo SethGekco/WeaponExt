@@ -249,14 +249,53 @@ Two candidate mechanisms — decide in M1 after RE:
 Recommendation: mechanism 2 for everything except a genuine locomotor swap;
 keep the vanilla magnetron CLSID working via mechanism 1's release fix.
 
-### 2.3 RE checklist (Phase M0)
-- [ ] MagnetronLocomotionClass vtable + CLSID (PDB map names only the
-      WaveClass_Draw sites `0x7601C7/0x7601FB/0x760286`; loco internals
-      unnamed — disassemble)
-- [ ] Where the victim's "grabbed" state lives + why it never clears
-- [ ] Beam-stop detection point (weapon stops firing / firer dies / retargets)
-- [ ] Fire-veto location for `VictimCanFire` (per-class GetFireError funnels)
-- Consult the encyclopedia first (standing rule); contribute findings back.
+### 2.3 M0 RE — **DONE 2026-10-10**. Full writeup:
+encyclopedia `Magnetron-Locomotor-Imbue.md` (commit fc72e1d). Results, and
+what they change:
+
+- [x] ~~MagnetronLocomotionClass vtable + CLSID~~ — **there is no such class.**
+      `[LocomotorBeam]` specifies `{92612C46-…}` = **JumpjetLocomotionClass**
+      (ctor `0x54AC40`). The magnetron is a warhead that imbues the *jumpjet*
+      locomotor onto its victim. All the lift/drag/hand-back behaviour is
+      jumpjet code.
+- [x] Grabbed state: `firer->LocomotorTarget (+0x2AC)`,
+      `victim->LocomotorSource (+0x2B0)`,
+      `victim->IsAttackedByLocomotor (+0x6AD)`,
+      `victim->IsLetGoByLocomotor (+0x6AE)` (all YRpp's own names).
+      Set by `TechnoClass::ImbueLocomotor` `0x710000`, whose **only caller** is
+      `0x4696FB` in the bullet detonation path.
+- [x] **Why it never clears — root cause.** `ReleaseLocomotor` (`0x70FEE0`)
+      has 11 callers, but the only *"finished carrying, give control back"*
+      one is **`0x54C1CB`, inside JumpjetLocomotionClass**. Every other
+      `Locomotor=` CLSID imbues successfully and then never releases:
+      `IsAttackedByLocomotor` stays 1 forever, and the `0x4696A2` gate means
+      the unit cannot even be re-grabbed. (The firer's stale
+      `LocomotorTarget` is cleared by its *next* shot at `0x4695FD` — which is
+      why the paralysis sometimes looks like it clears on its own.)
+- [x] **Beam-stop detection: does not exist.** Vanilla never needs it, because
+      the jumpjet locomotor decides when the job is done. `ReleaseOnStop` must
+      be built from scratch; best seat is the per-frame `FootClass` AI region
+      (four flag reads at `0x4DA934/0x4DA9AF/0x4DA9C1/0x4DA9F3`).
+- [x] Fire-veto for `VictimCanFire`: three flag reads in TechnoClass's firing
+      region — `0x6FBF6B` (bool gate, returns false), `0x6FC1A8` (jumps to
+      abort), `0x6FCD71`. ⚠ exact method identities unpinned.
+- [x] Co-tenancy: **this entire subsystem is unhooked by Phobos/Ares/Antares/
+      Kratos** — we get clean seats, but also no prior art to copy.
+
+#### ⚠ The finding that reshapes M1
+**The victim's original locomotor is `Release()`d, not saved** (`0x7102E5`–
+`0x7102F6`). So "release the victim" cannot mean "restore its old locomotor" —
+there is nothing to restore. Any release we implement must **construct** a
+fresh locomotor from the victim's TechnoType via the same COM path
+`ImbueLocomotor` uses (`0x5233A0`), then clear the four state fields in the
+same order `ReleaseLocomotor` does (so fall-kill credit via
+`BeingManipulatedBy`/`ChronoWarpedByHouse` keeps working).
+
+This also means `Magnetron.ReleaseOnStop=yes` is **not** a small fix, and the
+§2.2 "mechanism 2" recommendation (Kratos-style simulated ballistics, never
+swapping the locomotor at all) is now the clearly better path for everything
+except honouring a genuine `Locomotor=` swap — it sidesteps the
+destroyed-locomotor problem entirely.
 
 ---
 
@@ -844,8 +883,8 @@ same warhead sections is fine as long as the key prefixes stay distinct.
 | B1 | Bounty core: value/cost/soylent ratios, hunter enable, victim/house filters |
 | B2 | Leeching (global/local), house routing, DeathReward |
 | B3 | Multiplier auras + warhead multipliers |
-| M0 | Magnetron RE (checklist §2.3) + encyclopedia contribution |
-| M1 | Release fix + VictimCanFire + speed/landing damage (pick mechanism) |
+| M0 | ~~Magnetron RE~~ **DONE 2026-10-10** — it's the jumpjet locomotor; release lives only in JumpjetLocomotionClass; victim's old loco is destroyed not saved (encyclopedia fc72e1d) |
+| M1 | Release fix + VictimCanFire + speed/landing damage. **Mechanism decided by M0: simulated ballistics** (no locomotor swap) + a per-frame beam-stop check in the FootClass AI region; a genuine CLSID swap additionally needs locomotor *re-creation* via 0x5233A0 |
 | M2 | Destination control + arcs + LiftOnly + DropPod customization + Dest.Types |
 | C1 | MC timers (PermaDelay/Duration), House routing, immunity tags |
 | C2 | ChargeTime/Resistance, SlotsTaken, PowerPerSlot |
