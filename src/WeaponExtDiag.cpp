@@ -16,6 +16,11 @@ namespace
 	int MagnetronCount = 0;
 	bool MagnetronBudgetAnnounced = false;
 
+	constexpr int GrabLogLimit = 60;
+	int GrabCount = 0;
+	constexpr int HoldLogLimit = 120;
+	int HoldCount_ = 0;
+
 	bool RanExeRun = false;
 	bool RanExeRunAlt = false;
 
@@ -83,6 +88,33 @@ void WeaponDiag::MagnetronLine(const char* why, const char* victim,
 		MagnetronCount, victim ? victim : "?", firer ? firer : "?",
 		why ? why : "?",
 		forcedUnjam ? " [restored: ended piggyback + cleared jam bools]" : "");
+}
+
+void WeaponDiag::MagnetronGrabLine(const char* firer, const char* victim,
+	const char* warhead, const char* outcome)
+{
+	if (GrabCount >= GrabLogLimit)
+		return;
+
+	++GrabCount;
+
+	Debug::Log("[WeaponExt][grab %2d] %s imbued %s via warhead %s -> %s\n",
+		GrabCount, firer ? firer : "?", victim ? victim : "?",
+		warhead ? warhead : "<none found>", outcome ? outcome : "?");
+}
+
+void WeaponDiag::MagnetronHoldLine(const char* victim, int heldFrames,
+	int framesSinceImbue, bool jammed, bool sourceMatches)
+{
+	if (HoldCount_ >= HoldLogLimit)
+		return;
+
+	++HoldCount_;
+
+	Debug::Log("[WeaponExt][hold %3d] %s held=%d sinceImbue=%d jammed=%s "
+		"sourceMatches=%s\n",
+		HoldCount_, victim ? victim : "?", heldFrames, framesSinceImbue,
+		jammed ? "yes" : "NO", sourceMatches ? "yes" : "NO");
 }
 
 bool WeaponDiag::ShouldLog()

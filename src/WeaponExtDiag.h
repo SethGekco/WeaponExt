@@ -33,4 +33,17 @@ namespace WeaponDiag
 	// stuck-victim bug shows up as a FLOOD, so the cap has to be its own.
 	void MagnetronLine(const char* why, const char* victim, const char* firer,
 		bool forcedUnjam = false);
+
+	// Why a grab did or did not get supervised. Added because a run produced
+	// ZERO release events with the tags correctly parsed, which left no way
+	// to tell whether OnImbued bailed, where it bailed, or whether the hold
+	// was being dropped again immediately. Guessing cost several play
+	// sessions; this makes the next run conclusive.
+	void MagnetronGrabLine(const char* firer, const char* victim,
+		const char* warhead, const char* outcome);
+
+	// Periodic state of a live hold, so "registered but never releases" and
+	// "registered then forgotten" become distinguishable.
+	void MagnetronHoldLine(const char* victim, int heldFrames,
+		int framesSinceImbue, bool jammed, bool sourceMatches);
 }

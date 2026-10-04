@@ -207,13 +207,39 @@ void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim)
 	if (!pFirer || !pVictim)
 		return;
 
+	const char* firerId = pFirer->GetTechnoType()
+		? pFirer->GetTechnoType()->ID : "?";
+	const char* victimId = pVictim->GetTechnoType()
+		? pVictim->GetTechnoType()->ID : "?";
+
 	auto const pWH = FindLocomotorWarhead(pFirer);
 	if (!pWH)
+	{
+		// The firer owns no weapon whose warhead has IsLocomotor=yes. That
+		// should be impossible here (it just imbued one), so if this fires
+		// the weapon-walk is the wrong way to resolve the warhead.
+		WeaponDiag::MagnetronGrabLine(firerId, victimId, nullptr,
+			"IGNORED: no IsLocomotor warhead found on firer");
 		return;
+	}
 
 	auto const pExt = WarheadTypeExt::ExtMap.Find(pWH);
-	if (!pExt || !pExt->HasAnyMagnetron())
-		return;   // vanilla behaviour, byte for byte
+	if (!pExt)
+	{
+		WeaponDiag::MagnetronGrabLine(firerId, victimId, pWH->ID,
+			"IGNORED: no ext data for that warhead");
+		return;
+	}
+
+	if (!pExt->HasAnyMagnetron())
+	{
+		// Resolved a locomotor warhead, but not one carrying our tags --
+		// e.g. the firer has a second locomotor weapon and the walk found
+		// that one first.
+		WeaponDiag::MagnetronGrabLine(firerId, victimId, pWH->ID,
+			"IGNORED: warhead carries no Magnetron.* tags");
+		return;
+	}
 
 	// Re-arm an existing entry rather than duplicating it: re-grabbing the
 	// same victim every shot is exactly how a magnetron holds something, and
@@ -226,6 +252,8 @@ void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim)
 			Holds[i].Firer = pFirer;
 			Holds[i].Warhead = pWH;
 			Holds[i].FramesSinceImbue = 0;
+			WeaponDiag::MagnetronGrabLine(firerId, victimId, pWH->ID,
+				"re-armed existing hold");
 			return;
 		}
 	}
@@ -246,6 +274,9 @@ void Magnetron::OnImbued(TechnoClass* pFirer, FootClass* pVictim)
 	// ImbueLocomotor's *entry*, so the new locomotor does not exist yet.
 	Holds[HoldCount++] = Hold { pVictim, pFirer, pWH, 0, 0, true,
 		pVictim->GetCoords(), 0, false, false };
+
+	WeaponDiag::MagnetronGrabLine(firerId, victimId, pWH->ID,
+		"registered new hold");
 }
 
 void Magnetron::PerFrame()
@@ -267,8 +298,20 @@ void Magnetron::PerFrame()
 
 		// Someone else already let this victim go (the jumpjet finishing
 		// normally, a new grab, or a death) -- nothing left to supervise.
-		if (!pVictim->IsAttackedByLocomotor || pVictim->LocomotorSource != pFirer)
+		//
+		// This is also the prime suspect for "registered but never releases":
+		// if it trips every frame the hold is dropped and re-registered on
+		// the next shot, so HeldFrames can never reach MaxHoldTime. Logged
+		// with both halves separated so the next run says which one it is.
+		const bool jammed = pVictim->IsAttackedByLocomotor;
+		const bool sourceMatches =
+			static_cast<TechnoClass*>(pVictim->LocomotorSource) == pFirer;
+
+		if (!jammed || !sourceMatches)
 		{
+			WeaponDiag::MagnetronHoldLine(
+				pVictim->GetTechnoType() ? pVictim->GetTechnoType()->ID : "?",
+				hold.HeldFrames, hold.FramesSinceImbue, jammed, sourceMatches);
 			Forget(i);
 			continue;
 		}
@@ -289,6 +332,15 @@ void Magnetron::PerFrame()
 
 		++hold.HeldFrames;
 		++hold.FramesSinceImbue;
+
+		// Heartbeat every half-second-ish while a hold is live, so a hold
+		// that persists but never trips a release condition is visible.
+		if (hold.HeldFrames % 15 == 0)
+		{
+			WeaponDiag::MagnetronHoldLine(
+				pVictim->GetTechnoType() ? pVictim->GetTechnoType()->ID : "?",
+				hold.HeldFrames, hold.FramesSinceImbue, true, true);
+		}
 
 		// --- movement tracking (for the "stopped" handoff trigger) --------
 		auto const coords = pVictim->GetCoords();
