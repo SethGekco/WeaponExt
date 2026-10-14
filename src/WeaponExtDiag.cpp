@@ -16,6 +16,10 @@ namespace
 	int MagnetronCount = 0;
 	bool MagnetronBudgetAnnounced = false;
 
+	constexpr int SpawnerLogLimit = 80;
+	int SpawnerCount = 0;
+	bool SpawnerBudgetAnnounced = false;
+
 	constexpr int GrabLogLimit = 60;
 	int GrabCount = 0;
 	constexpr int HoldLogLimit = 120;
@@ -115,6 +119,28 @@ void WeaponDiag::MagnetronHoldLine(const char* victim, int heldFrames,
 		"sourceMatches=%s\n",
 		HoldCount_, victim ? victim : "?", heldFrames, framesSinceImbue,
 		jammed ? "yes" : "NO", sourceMatches ? "yes" : "NO");
+}
+
+void WeaponDiag::SpawnerLine(const char* spawner, int docked, int alive)
+{
+	if (SpawnerCount >= SpawnerLogLimit)
+	{
+		if (!SpawnerBudgetAnnounced)
+		{
+			SpawnerBudgetAnnounced = true;
+			Debug::Log("[WeaponExt] Spawner-log budget reached (%d). If it got "
+				"here fast, the launched spawns are cycling straight back to "
+				"the carrier -- that is vanilla's no-target path and what the "
+				"OnNoTarget steering is for.\n", SpawnerLogLimit);
+		}
+		return;
+	}
+
+	++SpawnerCount;
+
+	Debug::Log("[WeaponExt][spawn %2d] %s auto-deploying with no target "
+		"(docked=%d alive=%d)\n", SpawnerCount, spawner ? spawner : "?",
+		docked, alive);
 }
 
 bool WeaponDiag::ShouldLog()

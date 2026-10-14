@@ -39,6 +39,7 @@
     <!-- M1: magnetron -->
     <ClCompile Include="src\Magnetron.cpp" />
     <ClCompile Include="src\Hooks.Magnetron.cpp" />
+    <ClCompile Include="src\Hooks.Spawner.cpp" />
     <ClCompile Include="src\Ext\WarheadType\Body.cpp" />
     <!-- Scatter (merged from ScatterExt) -->
     <ClCompile Include="src\ScatterExtDiag.cpp" />

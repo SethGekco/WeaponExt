@@ -104,6 +104,27 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	ReadReceiver(pINI, section, "Bounty.Receiver", this->Bounty_Receiver);
 	ReadPayer(pINI, section, "Bounty.Payer", this->Bounty_Payer);
 
+	this->Spawner_AutoDeploy.Read(exINI, section, "Spawner.AutoDeploy");
+	this->Spawner_AutoDeploy_MinReady.Read(exINI, section, "Spawner.AutoDeploy.MinReady");
+	this->Spawner_AutoDeploy_Delay.Read(exINI, section, "Spawner.AutoDeploy.Delay");
+	this->Spawner_AutoDeploy_Release.Read(exINI, section, "Spawner.AutoDeploy.Release");
+	this->Spawner_AutoDeploy_Regenerate.Read(exINI, section, "Spawner.AutoDeploy.Regenerate");
+	this->Spawner_AutoDeploy_MaxReleased.Read(exINI, section, "Spawner.AutoDeploy.MaxReleased");
+
+	if (this->Spawner_AutoDeploy)
+	{
+		Debug::Log("[WeaponExt] %s: spawner auto-deploy ON (minReady=%d) -- "
+			"SP1 implements the launch gate. NOT YET IMPLEMENTED and ignored "
+			"for now: Release=%s Regenerate=%s MaxReleased=%d Delay=%d, and "
+			"the OnNoAmmo/OnNoTarget steering.\n",
+			section,
+			this->Spawner_AutoDeploy_MinReady.Get(),
+			this->Spawner_AutoDeploy_Release ? "yes" : "no",
+			this->Spawner_AutoDeploy_Regenerate ? "yes" : "no",
+			this->Spawner_AutoDeploy_MaxReleased.Get(),
+			this->Spawner_AutoDeploy_Delay.Get());
+	}
+
 	// --- bounty: leeching. Maintain the fast-path count with an old/new diff
 	// so repeated (and destructive) INI passes over the same section cannot
 	// drift it -- see the Encyclopedia's Techno-Type-Lifecycle notes.
@@ -177,6 +198,12 @@ void TechnoTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->Bounty_VictimHouses)
 		.Process(this->Bounty_Receiver)
 		.Process(this->Bounty_Payer)
+		.Process(this->Spawner_AutoDeploy)
+		.Process(this->Spawner_AutoDeploy_MinReady)
+		.Process(this->Spawner_AutoDeploy_Delay)
+		.Process(this->Spawner_AutoDeploy_Release)
+		.Process(this->Spawner_AutoDeploy_Regenerate)
+		.Process(this->Spawner_AutoDeploy_MaxReleased)
 		.Process(this->Bounty_Leech)
 		.Process(this->Bounty_Leech_Range)
 		.Process(this->Bounty_Leech_Ratio)

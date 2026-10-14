@@ -46,4 +46,10 @@ namespace WeaponDiag
 	// "registered then forgotten" become distinguishable.
 	void MagnetronHoldLine(const char* victim, int heldFrames,
 		int framesSinceImbue, bool jammed, bool sourceMatches);
+
+	// Each auto-deploy launch. Tightly budgeted: if the launched spawns take
+	// vanilla's no-target path straight home, this will fire in a loop, and
+	// seeing that loop in the log is exactly how we learn what targetless
+	// spawns do.
+	void SpawnerLine(const char* spawner, int docked, int alive);
 }

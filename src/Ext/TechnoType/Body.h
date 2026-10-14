@@ -44,6 +44,17 @@ public:
 		BountyReceiver Bounty_Receiver;
 		BountyPayer Bounty_Payer;
 
+		// --- Spawner auto-deploy (DESIGN.md 7.3b, phase SP1) ---------------
+		// SP1 acts on AutoDeploy + MinReady only; the rest is parsed and
+		// echoed to the log now so the tag surface is visible and stable,
+		// and implemented in SP2 once the gate is confirmed in-game.
+		Valueable<bool> Spawner_AutoDeploy;
+		Valueable<int> Spawner_AutoDeploy_MinReady;
+		Valueable<int> Spawner_AutoDeploy_Delay;        // SP2
+		Valueable<bool> Spawner_AutoDeploy_Release;     // SP2
+		Valueable<bool> Spawner_AutoDeploy_Regenerate;  // SP2
+		Valueable<int> Spawner_AutoDeploy_MaxReleased;  // SP2
+
 		// --- Bounty: leeching (earn from kills this object did not make) ---
 		Valueable<bool> Bounty_Leech;
 		Valueable<double> Bounty_Leech_Range;   // cells; -1 = whole map
@@ -70,6 +81,12 @@ public:
 			, Bounty_VictimHouses { AffectedHouse::Enemies }
 			, Bounty_Receiver { BountyReceiver::Killer }
 			, Bounty_Payer { BountyPayer::None }
+			, Spawner_AutoDeploy { false }
+			, Spawner_AutoDeploy_MinReady { 1 }
+			, Spawner_AutoDeploy_Delay { 0 }
+			, Spawner_AutoDeploy_Release { false }
+			, Spawner_AutoDeploy_Regenerate { true }
+			, Spawner_AutoDeploy_MaxReleased { -1 }
 			, Bounty_Leech { false }
 			, Bounty_Leech_Range { -1.0 }
 			, Bounty_Leech_Ratio { 1.0 }
