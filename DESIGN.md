@@ -699,6 +699,102 @@ Missile.Profiles=Blessed           ; Requirement-gated overrides, same
 Selection happens at spawn creation (SpawnManager site), so each launched
 missile evaluates rank/conditions at that moment.
 
+### 7.3b Auto-deploy: a spawner that launches without a target
+
+Rex's case: a `[CARRIER]` sits on three docked HORNETs until the player orders
+an attack. He wants "I have units ready, I'm deploying them now" — no target,
+no weapon involved (a weapon would give every spawn the same attack order).
+
+**Verified mechanism (2026-10-03).** `SpawnManagerClass::AI` dispatches each
+node through a **jump table at `0x6B7B6C`** indexed by `SpawnNodeStatus`
+(`Idle 0 → 0x6B72A2`, `TakeOff 1 → 0x6B7613`, `Preparing 2 → 0x6B7641`,
+`Attacking 3 → 0x6B76E3`, `Returning 4 → 0x6B7737`, `Reloading 6 → 0x6B7867`,
+`Dead 7 → 0x6B78B2`). The `Idle` handler opens with exactly three gates:
+
+```
+6b72a2  mov eax,[esi+0x68]   ; SpawnManagerClass::Target
+6b72a5  test eax,eax
+6b72a7  je  0x6b795a         ; <-- NO TARGET: node stays docked. This is it.
+        ... SpawnTimer must have expired ...
+6b72ce  cmp [esi+0x70],0x2   ; manager Status == CoolDown -> skip
+```
+
+So "always deploy" is the first gate and nothing else. Hook `0x6B72A2`
+(5 bytes = `mov`+`test`, two whole instructions, no relative branch) and
+return `0x6B72AD` to continue past the `je` when auto-deploying; return 0
+otherwise so vanilla decides. Offsets confirmed against YRpp's own struct
+order (`+0x24` Owner, `+0x3C` SpawnedNodes, `+0x68` Target, `+0x70` Status).
+
+Unhooked by Phobos/Ares/Antares/Kratos. Phobos's `Spawner.*` family is all
+pursuit limits, delays, facing and recycling — `Spawner.AttackImmediately` is
+the nearest and still requires a target. This is new ground.
+
+**Three orthogonal toggles**, per Rex (he wanted all three combinable rather
+than three fixed modes):
+```ini
+[CARRIER]
+Spawner.AutoDeploy=yes          ; launch docked spawns with no target at all
+Spawner.AutoDeploy.Delay=0      ; extra frames between auto-launches
+Spawner.AutoDeploy.MinReady=1   ; wait until this many are docked+ready
+Spawner.AutoDeploy.Release=no   ; no  = they stay the carrier's spawns and
+                                ;       loiter; return/reload/recycle all keep
+                                ;       working (an air patrol)
+                                ; yes = detach into ordinary player-controlled
+                                ;       units
+Spawner.AutoDeploy.Regenerate=yes ; only meaningful with Release=yes.
+                                ;   yes = carrier builds replacements per
+                                ;         SpawnRegenRate (a factory)
+                                ;   no  = it delivers one loadout and is done
+Spawner.AutoDeploy.MaxReleased=-1 ; lifetime cap on released units; -1 = none.
+                                ;   A guard rail, because Release+Regenerate
+                                ;   is unbounded production by construction.
+```
+Rex's three original cases fall out as combinations: patrol = `Release=no`;
+factory = `Release=yes, Regenerate=yes`; one-shot dropship =
+`Release=yes, Regenerate=no`.
+
+**Fourth axis — what a deployed spawn actually does** (Rex: "they should land
+if they have no ammo, but it should be the modder's call"). Each value maps
+onto a node status in the verified table above, so these are steering an
+existing state machine rather than inventing behaviour:
+```ini
+Spawner.AutoDeploy.OnNoAmmo=return    ; return | hover | release
+Spawner.AutoDeploy.OnNoTarget=loiter  ; loiter | hover | return
+Spawner.AutoDeploy.LoiterRange=4      ; cells from the carrier, for loiter
+```
+| Value | Implemented as | Effect |
+|---|---|---|
+| `return` | node `Status = Returning(4)` | flies back, docks, and `Reloading(6)` refills ammo — for a carrier craft this *is* landing, and it is the default |
+| `hover` | hold node at `Preparing(2)` ("gathering, waiting") | stays airborne where it is, does not come home |
+| `loiter` | `Preparing(2)` + destination within `LoiterRange` of the carrier | orbits the carrier while it waits |
+| `release` (OnNoAmmo only) | the §7.3b detach | a dry spawn becomes the player's problem instead of returning |
+
+⚠ **Deliberately NOT offered: a "go hunt for targets" value.**
+`Mission::Hunt` is a no-op for **player-owned** units by vanilla design — the
+`FootClass::Mission_Hunt` fallback at `0x4D54EE` checks
+`HouseClass::IsControlledByHuman` and sends only AI houses toward the enemy
+base, idling humans ([[yr-hunt-is-an-ai-mission]], verified by disassembly and
+in-game). A `hunt` tag would silently do nothing on a human player's carrier,
+which is worse than not having it. Real seek-and-destroy would need its own
+movement logic.
+
+**Staging (applying this session's lesson about layering unverified features).**
+SP1 = the auto-deploy gate only, with the whole tag surface parsed and echoed
+to the log so what is recognised is visible. SP2 = `Release` and the two
+behaviour axes, once SP1 is confirmed in-game. The gate is one hook on a
+fully-mapped condition; the rest drives a state machine I have read but not
+yet exercised, and shipping both at once is exactly what cost several play
+sessions on the magnetron.
+
+**Release implementation note.** Rather than surgically removing the node from
+`SpawnedNodes`, a released spawn gets `node->Unit = nullptr`,
+`node->Status = Dead(7)` and the aircraft's `SpawnOwner` cleared. That reuses
+the engine's own death/respawn path: with `Regenerate=yes` the manager refills
+the slot on its normal timer, and with `Regenerate=no` we drop the node so it
+never refills. Reusing the existing state beats inventing a teardown.
+⚠ Release is the uncertain axis and defaults OFF; auto-deploy on its own
+(patrol) touches only the one gate above.
+
 ### 7.4 Building "without ordnance" turret voxels (V3WO fix)
 Vehicles get `<Image>WO.vxl` swapping via Ares `NoSpawnAlt=yes`; buildings'
 turret draw path never consults spawn state. Fix: hook the building turret
@@ -911,6 +1007,8 @@ same warhead sections is fine as long as the key prefixes stay distinct.
 | SM1 | Missile.Scatter (destination draw at launch) |
 | SM2 | DynamicLocking + IntervalLimit + TimeoutBehavior; CanTargetAir |
 | SM3 | Per-rank/profile missiles; building WO turret voxel fix |
+| SP1 | Spawner auto-deploy gate (hook 0x6B72A2) + full tag surface parsed/echoed |
+| SP2 | AutoDeploy.Release (detach via Dead-node reuse) + OnNoAmmo/OnNoTarget steering |
 | L0 | RE `0x4585C0` KillOccupants: mirror vanilla's `Occupants` + `FiringOccupantIndex` bookkeeping (§8.4); probe logging container contents at detonation |
 | L1 | Passengers + Occupants damage with `Eject=no` (in-place), snapshot/liveness discipline |
 | L2 | Ejection path: deterministic cell search, `Eject=damage/always`, fallbacks, double-kill guard |
