@@ -725,9 +725,27 @@ return `0x6B72AD` to continue past the `je` when auto-deploying; return 0
 otherwise so vanilla decides. Offsets confirmed against YRpp's own struct
 order (`+0x24` Owner, `+0x3C` SpawnedNodes, `+0x68` Target, `+0x70` Status).
 
-Unhooked by Phobos/Ares/Antares/Kratos. Phobos's `Spawner.*` family is all
-pursuit limits, delays, facing and recycling — `Spawner.AttackImmediately` is
-the nearest and still requires a target. This is new ground.
+The *gate* is unhooked by every framework, and launching with no target at all
+is new ground. But a fair amount of adjacent spawner control already exists
+and should not be rebuilt:
+
+| Where | What it already gives you |
+|---|---|
+| Phobos | `Spawner.DelayFrames` (frames between *individual* launches — the within-wave spacing, default 20 / 9 for missiles), `Spawner.UseTurretFacing`, `Spawner.RecycleCoord`/`.RecycleOnTurret`/`.RecycleRange`/`.RecycleAnim` (where they come back to), `Spawner.LimitRange`/`.ExtraLimitRange` (pursuit leash), `Spawner.AttackImmediately` |
+| **Kratos** | `Spawns=` as a **list** → different spawn *types* per node (`MultiSpawns`); `SpawnDelay`; `NoShadowSpawnAlt`; `SpawnFireOnce` (hook `0x6B796A`: once `CountDockedSpawns()==0` it clears `Destination` and `SetTarget(nullptr)`, so the wing launches once and stops re-engaging); and **`SpawnerBurstFLH`** — a map of spawn index → `CoordStruct` that overrides the launch coordinate per spawn (`index = SpawnCount - docked - 1`, writes through `EAX`, returns `0x6B7498`). That last one *is* per-spawn launch positioning. |
+
+⚠ **Kratos is not in Rex's injection list** (`Kratos1.dll` is present in the
+RA2 folder but not passed with `-i=`), so none of the Kratos column is
+available to him today. Loading it would also put it in the same
+`SpawnManagerClass::AI` window we now hook (it owns `0x6B7317`, plus the
+`0x6B7498` return above), so that is a compatibility question rather than a
+free win.
+
+**Still genuinely missing everywhere: scatter on launch.** Kratos's per-index
+FLH is the *manual* version (you author each offset). A randomised spread
+would be new — and we already own the scatter engine from the ScatterExt
+merge, so it should reuse that, which also means honouring the zero-draw
+invariant and `ScenarioClass::Random` rather than inventing a second RNG path.
 
 **Three orthogonal toggles**, per Rex (he wanted all three combinable rather
 than three fixed modes):
