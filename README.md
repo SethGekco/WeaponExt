@@ -32,6 +32,34 @@ with `--recurse-submodules`.
 - The DLL does nothing until added to the Syringe `-i=` list in wine-game.sh
   and to ClientDefinitions.ini.
 
+### Kratos coexistence (measured 2026-10-03)
+
+39 WeaponExt hooks vs the 437 Kratos hooks in the registry:
+
+- **Zero byte-range overlaps.** No illegal geometry anywhere.
+- **32 shared addresses**, and all but one are the ordinary Ext-container
+  lifecycle seats (Bullet/Techno/Weapon/WarheadType CTOR, DTOR, LoadFromINI,
+  SaveLoad). Antares, Ares and Phobos already share those today and everyone
+  returns 0 — the designed pattern, not a conflict.
+- **One real interaction: `0x6FF29E`** (the rearm-timer store). Kratos's
+  `TechnoClass_Fire_ROFMultiplier` and our ROF-by-range both read-modify-write
+  `EAX` there, so the two multipliers compose — arguably correct. Edge case:
+  Kratos's `SkipROF` writes `EAX=0` and our "never below 1" guard could
+  override that, but only on a weapon carrying *both* mods' ROF tags.
+- **Spawn AI is complementary, not conflicting.** Our auto-deploy gate
+  (`0x6B72A2`) sits *earlier* in `SpawnManagerClass::AI` than Kratos's
+  `0x6B7317` and `0x6B743E`, so their returns cannot route around it (the
+  failure mode Phobos's `0x4696CE` caused for us). Neither Kratos handler
+  reads `Target`, so a targetless launch breaks no assumption of theirs —
+  **our waves plus Kratos's `SpawnerBurstFLH` should actually compose**, giving
+  per-index launch positioning for free.
+
+⚠ The real risk is operational, not geometric: Kratos adds ~437 hooks, and
+this stack has previously failed at startup during "Creating code hooks" with
+an MSVC C++ throw then an AV (see the 26-DLL / 3437-hook incident). Check
+`syringe.log` after adding it. The registry is also source-derived from a
+locally patched Kratos checkout, so the shipped DLL may differ.
+
 ## Bounty (B1 + B2) — quick reference
 
 Nothing pays out until some TechnoType opts in. Amounts come from the victim;
