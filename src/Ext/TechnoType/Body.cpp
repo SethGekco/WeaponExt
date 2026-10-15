@@ -113,16 +113,17 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 
 	if (this->Spawner_AutoDeploy)
 	{
-		Debug::Log("[WeaponExt] %s: spawner auto-deploy ON (minReady=%d) -- "
-			"SP1 implements the launch gate. NOT YET IMPLEMENTED and ignored "
-			"for now: Release=%s Regenerate=%s MaxReleased=%d Delay=%d, and "
-			"the OnNoAmmo/OnNoTarget steering.\n",
+		Debug::Log("[WeaponExt] %s: spawner auto-deploy ON (minReady=%d "
+			"delayBetweenWaves=%d) -- launches the whole wing as one wave. "
+			"NOT YET IMPLEMENTED and ignored for now: Release=%s "
+			"Regenerate=%s MaxReleased=%d, and the OnNoAmmo/OnNoTarget "
+			"steering.\n",
 			section,
 			this->Spawner_AutoDeploy_MinReady.Get(),
+			this->Spawner_AutoDeploy_Delay.Get(),
 			this->Spawner_AutoDeploy_Release ? "yes" : "no",
 			this->Spawner_AutoDeploy_Regenerate ? "yes" : "no",
-			this->Spawner_AutoDeploy_MaxReleased.Get(),
-			this->Spawner_AutoDeploy_Delay.Get());
+			this->Spawner_AutoDeploy_MaxReleased.Get());
 	}
 
 	// --- bounty: leeching. Maintain the fast-path count with an old/new diff
