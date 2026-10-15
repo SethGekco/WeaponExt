@@ -51,5 +51,5 @@ namespace WeaponDiag
 	// vanilla's no-target path straight home, this will fire in a loop, and
 	// seeing that loop in the log is exactly how we learn what targetless
 	// spawns do.
-	void SpawnerLine(const char* spawner, int docked, int alive);
+	void SpawnerLine(const char* spawner, int docked, int alive, int waveSize);
 }

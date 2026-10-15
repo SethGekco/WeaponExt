@@ -144,6 +144,19 @@ DEFINE_HOOK(0x6B72A2, SpawnManagerClass_AI_AutoDeploy, 0x5)
 	// engine's own pacing instead of node 0 monopolising the slot.
 	if (pWave->Pending > 0)
 	{
+		// Re-check the concurrent cap mid-wave: `airborne` grows with every
+		// launch, so a wave sized against the cap can still hit it if some
+		// spawns loiter instead of returning.
+		const int cap = pExt->Spawner_AutoDeploy_MaxDeployed;
+		if (cap >= 0
+			&& (pThis->CountAliveSpawns() - pThis->CountDockedSpawns()) >= cap)
+		{
+			pWave->Pending = 0;
+			pWave->NextWaveFrame = Unsorted::CurrentFrame
+				+ pExt->Spawner_AutoDeploy_Delay;
+			return LetVanillaDecide;
+		}
+
 		--pWave->Pending;
 
 		if (pWave->Pending == 0)
@@ -160,11 +173,38 @@ DEFINE_HOOK(0x6B72A2, SpawnManagerClass_AI_AutoDeploy, 0x5)
 		return LetVanillaDecide;
 
 	const int docked = pThis->CountDockedSpawns();
-	if (docked < pExt->Spawner_AutoDeploy_MinReady)
-		return LetVanillaDecide;   // wait until enough are home and reloaded
+	const int alive = pThis->CountAliveSpawns();
+	const int airborne = alive - docked;   // currently out
 
-	// Start a wave: this launch, plus one for each other docked node.
-	pWave->Pending = docked - 1;
+	// MinReady is a FLOOR, not a wave size: "do not bother launching for
+	// fewer than this". Setting it to 1 is what lets a leftover single spawn
+	// go out alone -- e.g. 9 survivors with WaveSize=2 gives 2,2,2,2 then 1.
+	if (docked < pExt->Spawner_AutoDeploy_MinReady)
+		return LetVanillaDecide;
+
+	// MaxDeployed is a CAP ON CONCURRENTLY AIRBORNE, which is a different
+	// question from how many go per wave: it matters once they loiter instead
+	// of coming straight home.
+	const int maxDeployed = pExt->Spawner_AutoDeploy_MaxDeployed;
+	if (maxDeployed >= 0 && airborne >= maxDeployed)
+		return LetVanillaDecide;
+
+	// WaveSize is a CAP PER WAVE. <=0 means "the whole wing".
+	int waveSize = pExt->Spawner_AutoDeploy_WaveSize;
+	if (waveSize <= 0)
+		waveSize = docked;
+
+	if (waveSize > docked)
+		waveSize = docked;
+
+	if (maxDeployed >= 0 && waveSize > maxDeployed - airborne)
+		waveSize = maxDeployed - airborne;
+
+	if (waveSize <= 0)
+		return LetVanillaDecide;
+
+	// Start a wave: this launch, plus the remainder of the wave.
+	pWave->Pending = waveSize - 1;
 
 	if (pWave->Pending == 0)
 	{
@@ -172,7 +212,7 @@ DEFINE_HOOK(0x6B72A2, SpawnManagerClass_AI_AutoDeploy, 0x5)
 			+ pExt->Spawner_AutoDeploy_Delay;
 	}
 
-	WeaponDiag::SpawnerLine(pType->ID, docked, pThis->CountAliveSpawns());
+	WeaponDiag::SpawnerLine(pType->ID, docked, alive, waveSize);
 
 	return LaunchAnyway;
 }

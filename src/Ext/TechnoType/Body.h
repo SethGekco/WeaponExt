@@ -49,8 +49,14 @@ public:
 		// echoed to the log now so the tag surface is visible and stable,
 		// and implemented in SP2 once the gate is confirmed in-game.
 		Valueable<bool> Spawner_AutoDeploy;
+		// Three independent numbers, deliberately not conflated:
+		//   MinReady    - floor: do not bother launching for fewer than this
+		//   WaveSize    - cap:   never launch more than this in one wave
+		//   MaxDeployed - cap:   never have more than this airborne at once
 		Valueable<int> Spawner_AutoDeploy_MinReady;
-		Valueable<int> Spawner_AutoDeploy_Delay;        // SP2
+		Valueable<int> Spawner_AutoDeploy_WaveSize;
+		Valueable<int> Spawner_AutoDeploy_MaxDeployed;
+		Valueable<int> Spawner_AutoDeploy_Delay;
 		Valueable<bool> Spawner_AutoDeploy_Release;     // SP2
 		Valueable<bool> Spawner_AutoDeploy_Regenerate;  // SP2
 		Valueable<int> Spawner_AutoDeploy_MaxReleased;  // SP2
@@ -83,6 +89,8 @@ public:
 			, Bounty_Payer { BountyPayer::None }
 			, Spawner_AutoDeploy { false }
 			, Spawner_AutoDeploy_MinReady { 1 }
+			, Spawner_AutoDeploy_WaveSize { -1 }
+			, Spawner_AutoDeploy_MaxDeployed { -1 }
 			, Spawner_AutoDeploy_Delay { 0 }
 			, Spawner_AutoDeploy_Release { false }
 			, Spawner_AutoDeploy_Regenerate { true }

@@ -121,7 +121,8 @@ void WeaponDiag::MagnetronHoldLine(const char* victim, int heldFrames,
 		jammed ? "yes" : "NO", sourceMatches ? "yes" : "NO");
 }
 
-void WeaponDiag::SpawnerLine(const char* spawner, int docked, int alive)
+void WeaponDiag::SpawnerLine(const char* spawner, int docked, int alive,
+	int waveSize)
 {
 	if (SpawnerCount >= SpawnerLogLimit)
 	{
@@ -138,9 +139,9 @@ void WeaponDiag::SpawnerLine(const char* spawner, int docked, int alive)
 
 	++SpawnerCount;
 
-	Debug::Log("[WeaponExt][spawn %2d] %s auto-deploying with no target "
-		"(docked=%d alive=%d)\n", SpawnerCount, spawner ? spawner : "?",
-		docked, alive);
+	Debug::Log("[WeaponExt][spawn %2d] %s wave of %d launching with no target "
+		"(docked=%d alive=%d airborne=%d)\n", SpawnerCount,
+		spawner ? spawner : "?", waveSize, docked, alive, alive - docked);
 }
 
 bool WeaponDiag::ShouldLog()

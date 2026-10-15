@@ -106,6 +106,8 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 
 	this->Spawner_AutoDeploy.Read(exINI, section, "Spawner.AutoDeploy");
 	this->Spawner_AutoDeploy_MinReady.Read(exINI, section, "Spawner.AutoDeploy.MinReady");
+	this->Spawner_AutoDeploy_WaveSize.Read(exINI, section, "Spawner.AutoDeploy.WaveSize");
+	this->Spawner_AutoDeploy_MaxDeployed.Read(exINI, section, "Spawner.AutoDeploy.MaxDeployed");
 	this->Spawner_AutoDeploy_Delay.Read(exINI, section, "Spawner.AutoDeploy.Delay");
 	this->Spawner_AutoDeploy_Release.Read(exINI, section, "Spawner.AutoDeploy.Release");
 	this->Spawner_AutoDeploy_Regenerate.Read(exINI, section, "Spawner.AutoDeploy.Regenerate");
@@ -114,12 +116,14 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	if (this->Spawner_AutoDeploy)
 	{
 		Debug::Log("[WeaponExt] %s: spawner auto-deploy ON (minReady=%d "
-			"delayBetweenWaves=%d) -- launches the whole wing as one wave. "
+			"waveSize=%d maxDeployed=%d delayBetweenWaves=%d). "
 			"NOT YET IMPLEMENTED and ignored for now: Release=%s "
 			"Regenerate=%s MaxReleased=%d, and the OnNoAmmo/OnNoTarget "
 			"steering.\n",
 			section,
 			this->Spawner_AutoDeploy_MinReady.Get(),
+			this->Spawner_AutoDeploy_WaveSize.Get(),
+			this->Spawner_AutoDeploy_MaxDeployed.Get(),
 			this->Spawner_AutoDeploy_Delay.Get(),
 			this->Spawner_AutoDeploy_Release ? "yes" : "no",
 			this->Spawner_AutoDeploy_Regenerate ? "yes" : "no",
@@ -201,6 +205,8 @@ void TechnoTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->Bounty_Payer)
 		.Process(this->Spawner_AutoDeploy)
 		.Process(this->Spawner_AutoDeploy_MinReady)
+		.Process(this->Spawner_AutoDeploy_WaveSize)
+		.Process(this->Spawner_AutoDeploy_MaxDeployed)
 		.Process(this->Spawner_AutoDeploy_Delay)
 		.Process(this->Spawner_AutoDeploy_Release)
 		.Process(this->Spawner_AutoDeploy_Regenerate)
