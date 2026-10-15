@@ -57,6 +57,9 @@ public:
 		Valueable<int> Spawner_AutoDeploy_WaveSize;
 		Valueable<int> Spawner_AutoDeploy_MaxDeployed;
 		Valueable<int> Spawner_AutoDeploy_Delay;
+		// Do not send out a half-loaded spawn. Defaults ON: a carrier
+		// launching planes with partial magazines is almost never wanted.
+		Valueable<bool> Spawner_AutoDeploy_RequireFullAmmo;
 		Valueable<bool> Spawner_AutoDeploy_Release;     // SP2
 		Valueable<bool> Spawner_AutoDeploy_Regenerate;  // SP2
 		Valueable<int> Spawner_AutoDeploy_MaxReleased;  // SP2
@@ -92,6 +95,7 @@ public:
 			, Spawner_AutoDeploy_WaveSize { -1 }
 			, Spawner_AutoDeploy_MaxDeployed { -1 }
 			, Spawner_AutoDeploy_Delay { 0 }
+			, Spawner_AutoDeploy_RequireFullAmmo { true }
 			, Spawner_AutoDeploy_Release { false }
 			, Spawner_AutoDeploy_Regenerate { true }
 			, Spawner_AutoDeploy_MaxReleased { -1 }

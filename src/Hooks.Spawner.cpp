@@ -111,6 +111,9 @@ DEFINE_HOOK(0x6B72A2, SpawnManagerClass_AI_AutoDeploy, 0x5)
 	enum { LaunchAnyway = 0x6B72AD, LetVanillaDecide = 0 };
 
 	GET(SpawnManagerClass* const, pThis, ESI);
+	// node->Unit, loaded into EDI at 0x6B7290 just before the status jump
+	// table dispatches here; nothing between then and now writes EDI.
+	GET(TechnoClass* const, pSpawn, EDI);
 
 	if (!pThis)
 		return LetVanillaDecide;
@@ -130,6 +133,20 @@ DEFINE_HOOK(0x6B72A2, SpawnManagerClass_AI_AutoDeploy, 0x5)
 	auto const pWave = GetWave(pThis);
 	if (!pWave)
 		return LetVanillaDecide;
+
+	// Never send out a half-loaded spawn. The engine's Reloading(6) state
+	// refills a docked node, but a node can reach Idle before its magazine is
+	// actually full, so this is an explicit check rather than a reliance on
+	// the state machine. A spawn type with no ammo concept (Ammo=0) passes
+	// trivially.
+	if (pExt->Spawner_AutoDeploy_RequireFullAmmo && pSpawn)
+	{
+		if (auto const pSpawnType = pSpawn->GetTechnoType())
+		{
+			if (pSpawnType->Ammo > 0 && pSpawn->Ammo < pSpawnType->Ammo)
+				return LetVanillaDecide;
+		}
+	}
 
 	// A real attack order outranks us completely. Abandon any wave in
 	// progress so we stop competing for the single launch slot -- that

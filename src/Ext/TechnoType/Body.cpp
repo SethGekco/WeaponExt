@@ -109,6 +109,8 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	this->Spawner_AutoDeploy_WaveSize.Read(exINI, section, "Spawner.AutoDeploy.WaveSize");
 	this->Spawner_AutoDeploy_MaxDeployed.Read(exINI, section, "Spawner.AutoDeploy.MaxDeployed");
 	this->Spawner_AutoDeploy_Delay.Read(exINI, section, "Spawner.AutoDeploy.Delay");
+	this->Spawner_AutoDeploy_RequireFullAmmo.Read(exINI, section,
+		"Spawner.AutoDeploy.RequireFullAmmo");
 	this->Spawner_AutoDeploy_Release.Read(exINI, section, "Spawner.AutoDeploy.Release");
 	this->Spawner_AutoDeploy_Regenerate.Read(exINI, section, "Spawner.AutoDeploy.Regenerate");
 	this->Spawner_AutoDeploy_MaxReleased.Read(exINI, section, "Spawner.AutoDeploy.MaxReleased");
@@ -116,7 +118,7 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 	if (this->Spawner_AutoDeploy)
 	{
 		Debug::Log("[WeaponExt] %s: spawner auto-deploy ON (minReady=%d "
-			"waveSize=%d maxDeployed=%d delayBetweenWaves=%d). "
+			"waveSize=%d maxDeployed=%d delayBetweenWaves=%d fullAmmoOnly=%s). "
 			"NOT YET IMPLEMENTED and ignored for now: Release=%s "
 			"Regenerate=%s MaxReleased=%d, and the OnNoAmmo/OnNoTarget "
 			"steering.\n",
@@ -125,6 +127,7 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* pINI)
 			this->Spawner_AutoDeploy_WaveSize.Get(),
 			this->Spawner_AutoDeploy_MaxDeployed.Get(),
 			this->Spawner_AutoDeploy_Delay.Get(),
+			this->Spawner_AutoDeploy_RequireFullAmmo ? "yes" : "no",
 			this->Spawner_AutoDeploy_Release ? "yes" : "no",
 			this->Spawner_AutoDeploy_Regenerate ? "yes" : "no",
 			this->Spawner_AutoDeploy_MaxReleased.Get());
@@ -208,6 +211,7 @@ void TechnoTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->Spawner_AutoDeploy_WaveSize)
 		.Process(this->Spawner_AutoDeploy_MaxDeployed)
 		.Process(this->Spawner_AutoDeploy_Delay)
+		.Process(this->Spawner_AutoDeploy_RequireFullAmmo)
 		.Process(this->Spawner_AutoDeploy_Release)
 		.Process(this->Spawner_AutoDeploy_Regenerate)
 		.Process(this->Spawner_AutoDeploy_MaxReleased)
